@@ -2,8 +2,8 @@
 
 **Date:** 2026-11-02. **Branch:** `001-session-command-center`. **Version:** 0.1.0.
 Implementation tasks are complete. Automated gates pass; owner usability/native-resume and
-actual Warp runtime acceptance remain unperformed. This is review evidence for a draft PR,
-not a claim that those manual gates passed.
+actual Warp runtime acceptance remain unperformed. The owner authorized integration into
+`main` through PR #2. Pending manual gates are not marked as passed.
 
 ## Final automated results
 
@@ -153,9 +153,13 @@ and logical cached transcript, without a forensic secure-erase claim.
 Git review includes source/docs/synthetic seeds/lock only, with no generated corpora, native
 histories, catalogs, credentials, wheel or venv. Secret-pattern and personal absolute-path scans
 found no matches. Checklist requirements.md remains unchanged, all 16 items checked.
-Constitution review: documented scope and traceability, TDD, private local data, bounded readers,
-fixed performance targets and compatibility limits are recorded here. Maintainer review is still
-required before merge; the PR is a draft and is not merged automatically.
+Pre-merge agent self-review (2026-11-02): checked constitutional compliance, requirement
+traceability, TDD/acceptance evidence, private-data boundaries, compatibility limits and
+user documentation against this implementation. The recorded automated gates pass; the
+manual gates below remain open and are not represented as passed. The owner explicitly
+requested integration into the primary branch. GitHub reports PR #2 mergeable with no
+hosted status checks registered. This records the review before the authorized merge;
+it does not certify real native resume or expand disabled capabilities.
 
 Unperformed gates: `pytest tests/acceptance/test_warp_runtime.py --run-warp`, owner SC-003,
 and consciously selected disposable native conversations in current terminal and Warp per
