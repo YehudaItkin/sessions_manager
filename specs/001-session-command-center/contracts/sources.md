@@ -1,0 +1,195 @@
+# Source Adapter Contract
+
+**Version**: 1
+**Evidence**: [research.md](../research.md#r2-независимые-возможности-источников).
+Источники — данные, не исполняемые plugins. Собственные readers входят в один пакет.
+
+## Общая граница
+
+Адаптер предоставляет probe, discover, read_history(page), read_usage, activity evidence,
+build_resume и prepare_cleanup_bundle. Он не выбирает UI, не спрашивает подтверждение,
+не пишет manager catalog самостоятельно и не выполняет arbitrary shell commands.
+Cleanup mutation запускает общий coordinator после adapter-specific proof.
+
+Результат содержит native identity, normalized records, revision/cursor, per-capability
+status, completeness и безопасные diagnostic codes. Пустой набор возвращается как complete
+только после успешного чтения корня. Optional неизвестные записи пропускаются с учётом
+полноты; неизвестная критическая структура делает соответствующую возможность unavailable.
+
+Каждый fixture-backed профиль фиксирует provider, CLI version evidence, native schema/
+record-version predicates, reader_version, allowed artifact types и capabilities.
+Только номер установленной программы недостаточен. Upgrade не включает mutation автоматически.
+
+build_resume получает исходный history_locator отдельно от execution cwd. Указанные ниже
+native argv действуют только при подтверждённой связи с выбранной историей; перенос проекта
+не разрешает слепую подстановку нового cwd в workspace-scoped lookup. Неподдержанная или
+неподтверждённая комбинация возвращает причину и ManualResumeGuide без child/ticket,
+сохраняя возможность выбора другой папки/отмены. Native data не переносятся, ID не заменяются.
+
+Стандартные корни: CODEX_HOME или ~/.codex; CLAUDE_CONFIG_DIR или ~/.claude;
+~/.cursor/chats; ~/.grok/sessions. Другие расположения добавляются явно.
+Полный обход home/диска, browser/desktop/ACP stores и private credentials исключены.
+Нестандартное расположение остаётся view-only, пока связь с native resume не доказана.
+В v1 произвольные explicit Grok/Cursor homes не имеют доказанного home override и
+остаются view-only даже при resume_context=native. Все relocated-cwd bindings пока
+отклоняются с ManualResumeGuide, до отдельного native gate.
+
+## SQLite reading
+
+- URI mode=ro, query_only=ON, trusted_schema=OFF, disabled extensions, известные обычные
+  таблицы и фиксированные параметризованные SELECT. SQL из sqlite_master не исполняется.
+- Запрет native DDL/DML, checkpoint, VACUUM и repair. Native executable/SDK не используется
+  для сканирования. Никакого immutable=1 на живом источнике.
+- WAL учитывается. Нельзя создавать отсутствующий SHM/WAL при просмотре: если безопасное
+  read-only открытие недоступно, источник получает unavailable.
+- Bounded read transactions; busy/изменение источника — retry до двух раз, затем partial/stale.
+- PRAGMA data_version сравнивается только в рамках одной открытой connection.
+  Его значение не является глобальной revision между запусками.
+- Несколько DB не образуют общую атомарную транзакцию. Paired fingerprints/cursors и
+  согласованность thread/item references проверяются; результат имеет as_of range.
+- При незавершённой JSONL строке живого append предыдущие строки доступны, хвост — partial.
+  Нельзя считать такое чтение доказательством закрытости.
+
+## Codex profile: 0.166.0 paginated
+
+Metadata: state_5.sqlite threads; identity=id; cwd/title/preview/name/model;
+created/updated/recency timestamps с предпочтением *_ms перед seconds.
+History: thread_history_1.sqlite tables:
+
+| Таблица | Ключевые поля |
+| ------- | ------------ |
+| thread_turns | thread_id, turn_id, rollout_ordinal, status, started_at, completed_at, root_turn_id |
+| thread_items | thread_id, turn_id, item_id, rollout_ordinal, item_json, item_type, created_at_ms, updated_at_ordinal |
+| thread_realtime_items | thread_id, item_id, rollout_ordinal, created_at_ms, item_type, item_json |
+| thread_history_projection_state | thread_id, next_rollout_byte_offset, next_rollout_ordinal |
+| state_5.thread_spawn_edges | parent_thread_id, child_thread_id, status |
+
+Сортировка по подтверждённому native ordinal/item_id, не по произвольному порядку SQLite.
+В v1 текст берётся из thread_items/thread_realtime_items и rollout;
+thread_turns/projection_state/spawn_edges перечислены как native schema evidence, а не
+как отдельные сообщения. Turn IDs обычных items сохраняются. Изменение main/WAL/rollout
+после metadata fingerprint делает результат partial; общей транзакции между DB нет.
+Поддержанные ThreadItem: userMessage, agentMessage, commandExecution, fileChange,
+mcpToolCall и другие whitelisted display types; internal/unknown payload не становится
+обычным assistant message.
+
+JSONL: session_meta, turn_context, response_item, event_msg, token_usage_record и compaction
+metadata. Проекция и rollout одной native записи дают одно событие. Отсутствующий rollout
+не скрывает доступную проекцию, но может ограничить history/resume/usage completeness.
+
+Usage: payload.response_id + payload.thread_id; usage — per-response;
+thread_token_usage/turn_token_usage — snapshots. Cached input/reasoning output являются
+breakdown, не прибавкой к total. Legacy token_count snapshots — отдельный accounting scope.
+Сброс legacy counters/compaction делает lifetime неполным. При смешении legacy snapshots
+с receipts неизвестное перекрытие сохраняется как non_summable, не скрывается и не суммируется.
+Если payload.thread_id отличается от ID файла-контейнера, расход не приписывается
+контейнеру автоматически: ownership и membership должны следовать native evidence.
+
+Resume argv: absolute_codex, resume, native_id, -C, cwd; проверенный CODEX_HOME context.
+Нет --last, model override, fork или permission bypass.
+Если доступен только stale index без доказанно возобновляемого контекста, resume unavailable.
+
+Mutation для этого paginated-профиля unavailable с reason=native_cascade_unbounded.
+Native archive/delete и прямые изменения state/history DB не используются.
+File-only legacy metadata/history может читаться при известной форме, но это не включает
+непроверенные возможности cleanup для старых версий.
+
+## Claude profile: native CLI 2.1.299 + проверенные JSONL shapes
+
+Metadata/history: projects/<project>/<native-id>.jsonl.
+Обязательная идентичность по sessionId/filename согласуется; cwd — из записей.
+Не декодировать имя project directory как гарантированный cwd.
+Root JSONL поддерживает user/assistant и whitelisted title/system/tool context.
+
+uuid/parentUuid сохраняют историю ветвления. Повторные блоки одного message.id объединяются
+только по известному stream/snapshot shape; assistant count не увеличивается на каждый chunk.
+Tool_result-only user records — tool_result. Subagents входят в bundle корня и не выдаются
+за самостоятельные возобновляемые корневые сессии без подтверждённой native семантики.
+
+Usage: последнее корректное монотонное usage по message.id; регрессия/конфликт — partial.
+Input = input_tokens + cache_read_input_tokens + cache_creation_input_tokens;
+nested TTL breakdown не суммируется повторно. Fork memberships с тем же message.id
+не дублируют факт в общей статистике.
+
+Resume: absolute_claude, --resume, native_id; process cwd и доказанный config-root context.
+Полный transcript path допустим только в проверенном native path-resume profile.
+Никакого --continue, --fork-session, rm-background-runtime или project purge.
+
+Cleanup manifest включает только точный transcript и доказанно session-owned companions.
+Project directory, shared history.jsonl, stats-cache.json и пользовательские файлы проекта
+не входят. Неизвестные ссылки, sidechains/dependencies или права делают cleanup unavailable.
+
+## Grok profile: Build 1.0.70
+
+Root: <sessions>/<encoded-cwd>/<native-id>/, основной marker — summary.json.
+Поля: info.id/info.cwd, created_at/updated_at/last_active_at, generated_title/session_summary,
+current_model_id, chat_format_version. Images-only stub не становится session.
+
+История: updates.jsonl ACP envelopes (timestamp, method, params.sessionId,
+params.update, eventId/agentTimestampMs metadata). Chunk grouping по проверенным message/
+prompt IDs. eventId — packet identity и сам по себе не разделяет сообщения; без
+доказанного message/prompt ID соседние chunks объединяются с partial. params._meta
+содержит eventId/agentTimestampMs/promptId. chat_history.jsonl — альтернативное представление, не второй независимый чат.
+System/compaction материал не увеличивает user message count.
+
+Usage: usage.json session totals единожды; turns/modelUsage — перекрывающиеся представления.
+Недостающие поля, usageIsIncomplete/costIsPartial учитываются. signals contextTokensUsed
+и contextWindowUsage не lifetime расход.
+
+Resume: absolute_grok, --cwd, cwd, --resume, native_id. Никакого prompt, --session-id,
+--restore-code, worktree/fork или bypass flags.
+Native list/search/delete/export не используются для сканирования/уборки.
+Неатрибутированный grok.db исключён из этого профиля.
+
+Active registry: active_sessions.json; session_id/pid/pid_start/cwd/opened_at только как
+evidence, с проверкой start identity/executable. Отсутствие записи не означает inactive.
+Cleanup — весь доказанный локальный session bundle, включая нужные logs/snapshots,
+без remote deletion. Неясная зависимость общего search/relocation metadata отключает mutation.
+
+## Cursor profile: CLI 2026.10.22-27dcf5f
+
+Root: ~/.cursor/chats/<workspace>/<chat-id>/, cwd из meta.json/проверенной metadata,
+не из необратимого workspace hash. Store: blobs(id,data BLOB), meta(key,value TEXT), WAL.
+meta['0'] — hex UTF-8 JSON; whitelisted agentId/latestRootBlobId/name/createdAt/lastUsedModel.
+Нельзя сохранять или показывать blobEncryptionKey и другие неразрешённые свойства.
+
+Проверенная read-only wire projection:
+- ConversationStateStructure: field 8 — turn references;
+- ConversationTurnStructure field 1 — AgentConversationTurnStructure;
+- AgentConversationTurnStructure field 1 — user reference, field 2 — step references;
+- UserMessage field 1 — text; optional field 18 — separate text reference;
+- ConversationStep oneof различает assistant/tool/thinking; assistant field 1 — text.
+
+Дескрипторы namespace-specific: одноимённый класс из другой области не используется.
+Только достижимые nodes в порядке ссылок; visited set, отсутствие циклов, type checks.
+Лимиты: blob <=32 МиБ, nesting <=64, varint <=10 bytes, <=100 000 nodes на сессию.
+Превышение лимита/неизвестный codec — явная partial/unavailable история, не усечение без пометки.
+Wire types 0/1/2/5 обрабатываются ограниченно; неподдержанные required shapes отклоняются.
+Metadata JSON и protobuf projection проверяются синтетическими fixtures; неизвестные
+JSON-encoded graph nodes/tool codecs остаются partial/unavailable. Vendor JS не импортируется.
+
+Context usedTokens/maxTokens допустимы только с kind=context. В v1 нет доказанного
+маппинга текущего context counters: context_metrics пуст, значения не угадываются.
+Cumulative input/output/total usage неизвестен без отдельного доказанного ledger.
+Resume: absolute_cursor_agent, --workspace, cwd, --resume, native_id, process cwd=cwd.
+Generic agent не подставляется; на исследованной машине он относится к Grok.
+
+Cleanup — полный per-chat directory, включая coherent store/WAL и companions;
+не global persistent-owner state и не .cursor/chats целиком. Lock presence валидируется;
+отсутствие lock не означает inactive. Cursor IDE/ACP roots по умолчанию не сканируются.
+
+## Минимальная матрица контрактных проверок
+
+Для каждого reader: complete, absent, permission denied, truncated/corrupt, unknown schema,
+missing ID/cwd/time/usage, alias/collision, changed-during-read, non-ASCII/control characters.
+Дополнительно:
+- Codex: missing rollout + available projection; cross-file generations; foreign thread
+  attribution; repeated receipt/snapshot и bounded cleanup отказ.
+- Claude: message chunks, tool-only user rows, forked message IDs, conflicting usage,
+  shared project neighbors и неизвестные companion dependencies.
+- Grok: ACP chunks, compaction alternative, usage totals vs turns/model, absent usage,
+  stale/reused PID, local-only cleanup и посторонний grok.db.
+- Cursor: reachable vs orphan blobs, protobuf/JSON, missing/cyclic/oversized nodes,
+  secret-property exclusion, optional unknown fields, context-only metrics и WAL.
+
+Fixtures создаются вручную/генератором из схем; копии реальных историй не используются.
