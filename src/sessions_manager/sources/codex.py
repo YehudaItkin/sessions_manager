@@ -1,0 +1,345 @@
+from pathlib import Path
+
+from ..models import Capability, Failure, Session, timestamp
+from .base import ScanResult, fingerprint, json_lines, resume_context_verified
+from .sqlite_reader import NativeSQLite
+
+
+class Adapter:
+    profile = "codex-paginated-0.166"
+
+    def __init__(self, root):
+        self.root = root
+
+    def discover(self):
+        root = self.root
+        path = root.path / "state_5.sqlite"
+        result = ScanResult(profile=self.profile)
+        if not root.path.exists():
+            return result
+        if path.exists():
+            stamps = {
+                "state": fingerprint(path),
+                "state_wal": fingerprint(path.with_name(path.name + "-wal")),
+                "projection": fingerprint(root.path / "thread_history_1.sqlite"),
+                "projection_wal": fingerprint(root.path / "thread_history_1.sqlite-wal"),
+            }
+            # Optional columns vary; only whitelisted names are ever selected.
+
+            with NativeSQLite(path, {"threads": {"id"}}) as reader:
+                actual = {r[1] for r in reader.connection.execute('PRAGMA table_info("threads")')}
+                allowed = {
+                    "id",
+                    "rollout_path",
+                    "cwd",
+                    "title",
+                    "preview",
+                    "name",
+                    "model",
+                    "created_at",
+                    "created_at_ms",
+                    "updated_at",
+                    "updated_at_ms",
+                    "recency_at",
+                    "recency_at_ms",
+                }
+                columns = allowed & actual
+                reader.tables["threads"] = columns
+                rows = reader.read("threads", sorted(columns))
+            for row in rows:
+                locator = Path(
+                    row.get("rollout_path") or root.path / "sessions" / (row["id"] + ".jsonl")
+                )
+                session = Session.build(
+                    root,
+                    row["id"],
+                    locator,
+                    cwd=row.get("cwd"),
+                    title=row.get("title") or row.get("name"),
+                    preview=row.get("preview"),
+                    model=row.get("model"),
+                    created_at=timestamp(
+                        row.get("created_at_ms") or row.get("created_at"),
+                        milliseconds=bool(row.get("created_at_ms")),
+                    ),
+                    last_activity_at=timestamp(
+                        row.get("recency_at_ms")
+                        or row.get("updated_at_ms")
+                        or row.get("recency_at")
+                        or row.get("updated_at")
+                    ),
+                    profile=self.profile,
+                    fingerprint={
+                        **stamps,
+                        "rollout": fingerprint(locator),
+                    },
+                )
+                self._capabilities(session, locator.is_file())
+                result.sessions.append(session)
+        else:
+            for locator in sorted((root.path / "sessions").rglob("*.jsonl")):
+                try:
+                    _, row = next(json_lines(locator))
+                    meta = row.get("payload", {})
+                    if row.get("type") != "session_meta" or not meta.get("id"):
+                        raise Failure("unsupported_native_schema", 3)
+                    session = Session.build(
+                        root,
+                        meta["id"],
+                        locator,
+                        cwd=meta.get("cwd"),
+                        created_at=timestamp(meta.get("timestamp")),
+                        profile="codex-jsonl",
+                        fingerprint={"rollout": fingerprint(locator)},
+                    )
+                    self._capabilities(session, True)
+                    result.sessions.append(session)
+                except (Failure, StopIteration):
+                    result.complete, result.reason = False, "invalid_native_record"
+        return result
+
+    def _capabilities(self, session, has_rollout):
+        session.capabilities["metadata"] = Capability("supported")
+        session.capabilities["cleanup"] = Capability("unavailable", "native_cascade_unbounded")
+        if has_rollout and resume_context_verified(self.root):
+            session.capabilities["resume"] = Capability("supported")
+        else:
+            session.capabilities["resume"] = Capability("unavailable", "resume_binding_unverified")
+
+    def read_history(self, session):
+        import json
+        from collections import defaultdict
+
+        from ..models import HistoryResult
+
+        events = {}
+        state = "complete"
+        db = self.root.path / "thread_history_1.sqlite"
+        try:
+            if not hasattr(self, "_projection"):
+                self._projection = defaultdict(list)
+                if db.is_file():
+                    tables = {
+                        "thread_items": {
+                            "thread_id",
+                            "turn_id",
+                            "item_id",
+                            "rollout_ordinal",
+                            "item_json",
+                            "created_at_ms",
+                        },
+                        "thread_realtime_items": {
+                            "thread_id",
+                            "item_id",
+                            "rollout_ordinal",
+                            "item_json",
+                            "created_at_ms",
+                        },
+                    }
+                    with NativeSQLite(db, tables) as reader:
+                        for table in tables:
+                            for row in reader.read(table, sorted(tables[table])):
+                                self._projection[row["thread_id"]].append(row)
+            for row in self._projection.get(session.native_id, []):
+                item = json.loads(row["item_json"])
+                event = self._item(
+                    session, item, row["item_id"], row["rollout_ordinal"], row.get("created_at_ms")
+                )
+                if event:
+                    event.turn_id = row.get("turn_id")
+                if event is None:
+                    state = "partial"
+                else:
+                    previous = events.get(event.native_id)
+                    if previous and (previous.role != event.role or previous.text != event.text):
+                        state = "partial"
+                    else:
+                        events[event.native_id] = event
+            path = Path(session.locator)
+            if path.is_file():
+                for ordinal, row in json_lines(path):
+                    payload = row.get("payload", {})
+                    if row.get("type") == "response_item":
+                        native = payload.get("id")
+                        if not native:
+                            state = "partial"
+                            continue
+                        if native in events:
+                            continue
+                        event = self._item(
+                            session, payload, native, ordinal, timestamp(row.get("timestamp"))
+                        )
+                        if event:
+                            events[native] = event
+                        else:
+                            state = "partial"
+                    elif row.get("type") in ("compacted",):
+                        state = "partial"
+            elif not events:
+                return HistoryResult([], "unavailable", "history_not_recorded")
+        except (Failure, OSError, ValueError):
+            state = "partial"
+        observed = {
+            "state": self.root.path / "state_5.sqlite",
+            "state_wal": self.root.path / "state_5.sqlite-wal",
+            "projection": db,
+            "projection_wal": db.with_name(db.name + "-wal"),
+            "rollout": Path(session.locator),
+        }
+        if any(
+            key in session.fingerprint and session.fingerprint[key] != fingerprint(path)
+            for key, path in observed.items()
+        ):
+            state = "partial"
+        return HistoryResult(sorted(events.values(), key=lambda e: (e.ordinal, e.event_uid)), state)
+
+    def _item(self, session, item, native, ordinal, created):
+        from ..models import HistoryEvent, identity
+
+        kind = item.get("type")
+        role = None
+        text = None
+        if kind in ("userMessage", "message"):
+            role = item.get("role", "user") if kind == "message" else "user"
+            if role not in ("user", "assistant"):
+                return None
+            content = item.get("content", [])
+            text = (
+                content
+                if isinstance(content, str)
+                else "\n".join(
+                    b.get("text", "")
+                    for b in content
+                    if b.get("type") in ("text", "inputText", "input_text", "output_text")
+                )
+            )
+        elif kind == "agentMessage":
+            role = "assistant"
+            text = item.get("text", "")
+        elif kind in ("commandExecution", "mcpToolCall", "fileChange", "function_call"):
+            role = "tool_call"
+            text = item.get("command") or item.get("name") or "File changes"
+        elif kind in ("function_call_output",):
+            role = "tool_result"
+            text = item.get("output")
+        elif kind in ("reasoning", "contextCompaction"):
+            return None
+        else:
+            return None
+        return HistoryEvent(
+            identity(session.namespace_id, session.native_id, native),
+            role,
+            ordinal,
+            text=text,
+            timestamp=created,
+            native_id=native,
+            locator=session.locator,
+        )
+
+    def prepare_cleanup_bundle(self, session):
+        from .base import prepare_cleanup_bundle
+
+        return prepare_cleanup_bundle(self.root, session)
+
+    def read_usage(self, session):
+        from ..models import (
+            TOKEN_CATEGORIES,
+            UsageFact,
+            UsageMembership,
+            UsageResult,
+            UsageSnapshot,
+            identity,
+        )
+        from .base import usage_counts
+
+        result = UsageResult()
+        facts = {}
+        snapshot = None
+        snapshot_incomplete = False
+        mapping = {
+            "input_tokens": "input_tokens",
+            "output_tokens": "output_tokens",
+            "cache_read_tokens": "cached_input_tokens",
+            "cache_write_tokens": "cache_write_input_tokens",
+            "reasoning_tokens": "reasoning_output_tokens",
+            "total_tokens": "total_tokens",
+        }
+        path = Path(session.locator)
+        if not path.is_file():
+            return UsageResult(state="unavailable", reason="not_recorded")
+        try:
+            for ordinal, row in json_lines(path):
+                payload = row.get("payload", {})
+                if row.get("type") == "token_usage_record" and isinstance(
+                    payload.get("usage"), dict
+                ):
+                    request = payload.get("response_id")
+                    owner = payload.get("thread_id")
+                    if not request or not owner:
+                        result.state = "partial"
+                        continue
+                    values = usage_counts(payload["usage"], mapping)
+                    uid = identity(session.namespace_id, "usage", request)
+                    fact = UsageFact(
+                        uid,
+                        "codex",
+                        session.namespace_id,
+                        request,
+                        owner_native_session_id=owner,
+                        **values,
+                    )
+                    if uid in facts and any(
+                        getattr(facts[uid], key) != getattr(fact, key) for key in TOKEN_CATEGORIES
+                    ):
+                        fact = UsageFact(
+                            uid,
+                            "codex",
+                            session.namespace_id,
+                            request,
+                            owner_native_session_id=owner,
+                            completeness="partial",
+                        )
+                        result.state = "partial"
+                    facts[uid] = fact
+                    if owner != session.native_id:
+                        result.state = "partial"
+                elif row.get("type") == "event_msg" and payload.get("type") == "token_count":
+                    raw = payload.get("info", {}).get("total_token_usage")
+                    if isinstance(raw, dict):
+                        values = usage_counts(raw, mapping)
+                        if snapshot and any(
+                            snapshot.values[key] is not None
+                            and values[key] is not None
+                            and values[key] < snapshot.values[key]
+                            for key in TOKEN_CATEGORIES
+                        ):
+                            snapshot_incomplete = True
+                        snapshot = UsageSnapshot(
+                            session.session_uid,
+                            "codex-thread:" + session.native_id,
+                            "current",
+                            values,
+                            completeness="partial" if snapshot_incomplete else "complete",
+                            native_revision={"ordinal": ordinal},
+                        )
+                elif row.get("type") == "compacted":
+                    snapshot_incomplete = True
+        except (OSError, Failure, ValueError):
+            result.state = "partial"
+            result.reason = "usage_incomplete"
+        result.facts = list(facts.values())
+        result.memberships = [
+            UsageMembership(identity(session.namespace_id, f.owner_native_session_id), f.fact_uid)
+            for f in result.facts
+        ]
+        if snapshot:
+            if snapshot_incomplete:
+                snapshot.completeness = "partial"
+            result.snapshots = [snapshot]
+        if snapshot_incomplete or (snapshot and facts):
+            result.state = "partial"
+            result.reason = "usage_scope_unverified"
+        if not facts and not snapshot and result.state == "complete":
+            result.state = "unavailable"
+            result.reason = "not_recorded"
+        return result

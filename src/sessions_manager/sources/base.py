@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ..models import Capability, Failure
+
+
+@dataclass
+class SourceProfile:
+    name: str
+    required_fields: set[str]
+    capabilities: dict = field(default_factory=dict)
+
+    def accepts(self, fields):
+        return self.required_fields <= set(fields)
+
+    def capability(self, name):
+        return self.capabilities.get(name, Capability("unavailable", "not_verified"))
+
+
+@dataclass
+class ScanResult:
+    sessions: list = field(default_factory=list)
+    complete: bool = True
+    reason: str | None = None
+    profile: str | None = None
+
+
+def read_many(reader, paths):
+    """Bound independent file opens; each native DB connection stays in its reader thread."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        yield from pool.map(reader, paths)
+
+
+def fingerprint(path: Path):
+    try:
+        info = path.stat(follow_symlinks=False)
+        return {
+            "dev": info.st_dev,
+            "inode": info.st_ino,
+            "size": info.st_size,
+            "mtime_ns": info.st_mtime_ns,
+        }
+    except OSError:
+        return {}
+
+
+def json_file(path: Path):
+    try:
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict):
+            raise ValueError()
+        return value
+    except (OSError, ValueError):
+        raise Failure("invalid_native_record", 3) from None
+
+
+def json_lines(path: Path):
+    with path.open("r", encoding="utf-8") as stream:
+        for ordinal, line in enumerate(stream):
+            if line.strip():
+                try:
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError()
+                    yield ordinal, value
+                except ValueError:
+                    raise Failure("invalid_native_record", 3) from None
+
+
+def directory_inventory(path):
+    import os
+    import stat
+
+    inventory = {}
+    complete = True
+    with os.scandir(path) as entries:
+        for entry in entries:
+            info = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                complete = False
+                continue
+            inventory[entry.name] = {
+                "dev": info.st_dev,
+                "inode": info.st_ino,
+                "size": info.st_size,
+                "mtime_ns": info.st_mtime_ns,
+            }
+    return inventory, sum(i["size"] for i in inventory.values()) if complete else None
+
+
+def prepare_cleanup_bundle(root, session, *, common_checks=None):
+    from ..models import CleanupBundle
+
+    expected = {
+        "claude": ("claude-jsonl-2.1", "2.1.299"),
+        "grok": ("grok-build-1.0.70", "1.0.70"),
+        "cursor": ("cursor-cli-2026.10", "2026.10.22-27dcf5f"),
+    }
+    if root.provider == "codex":
+        raise Failure("native_cascade_unbounded", 4)
+    profile, version = expected[root.provider]
+    if session.profile != profile or root.executable_version not in (version, "synthetic"):
+        raise Failure("cleanup_profile_unverified", 4)
+    if session.capabilities["cleanup"].state == "unsafe":
+        raise Failure(session.capabilities["cleanup"].reason or "unsafe_bundle", 5)
+    path = Path(session.locator)
+    if root.provider == "claude":
+        relative = path.relative_to(root.path)
+        if (
+            len(relative.parts) != 3
+            or relative.parts[0] != "projects"
+            or path.name != session.native_id + ".jsonl"
+        ):
+            raise Failure("unknown_bundle_topology", 4)
+        artifacts = [path]
+        companion = path.with_suffix("")
+        if companion.exists():
+            if any(p.name not in {"subagents", "tool-results"} for p in companion.iterdir()):
+                raise Failure("unknown_bundle_topology", 4)
+            artifacts.append(companion)
+        for _, row in json_lines(path):
+            if row.get("type") in ("user", "assistant") and row.get("version") not in (
+                "2.1.210",
+                "2.1.263",
+            ):
+                raise Failure("cleanup_profile_unverified", 4)
+    elif root.provider == "grok":
+        home = root.path / "sessions" if (root.path / "sessions").exists() else root.path
+
+        def checked(key, probe):
+            # Only discovery supplies this per-scan cache. Mutation always probes afresh.
+            if common_checks is None:
+                return probe()
+            if key not in common_checks:
+                common_checks[key] = probe()
+            return common_checks[key]
+
+        if checked(
+            (home, "shared_files"), lambda: any(not p.is_dir() for p in home.iterdir())
+        ) or checked(
+            (path.parent, "shared_files"), lambda: any(p.is_file() for p in path.parent.iterdir())
+        ):
+            raise Failure("shared_dependency_unverified", 4)
+        if checked(
+            (root.path, "shared_indices"),
+            lambda: any(
+                (root.path / name).exists()
+                for name in (
+                    "grok.db",
+                    "search.db",
+                    "session-index.db",
+                    "relocations.json",
+                    "search",
+                )
+            ),
+        ):
+            raise Failure("shared_dependency_unverified", 4)
+        allowed = {
+            "summary.json",
+            "updates.jsonl",
+            "chat_history.jsonl",
+            "usage.json",
+            "signals.json",
+            "images",
+            "snapshots",
+            "logs",
+        }
+        if any(p.name not in allowed for p in path.iterdir()):
+            raise Failure("unknown_bundle_topology", 4)
+        info = json_file(path / "summary.json").get("info", {})
+        if info.get("parent_session_id") or info.get("child_session_ids"):
+            raise Failure("shared_dependency_unverified", 4)
+        artifacts = [path]
+    else:
+        if path.name != session.native_id or not (path / "store.db").is_file():
+            raise Failure("unknown_bundle_topology", 4)
+        allowed = {
+            "meta.json",
+            "store.db",
+            "store.db-wal",
+            "store.db-shm",
+            "history.jsonl",
+            "prompt_history.json",
+            "attachments",
+            "logs",
+        }
+        if any(p.name not in allowed for p in path.iterdir()):
+            raise Failure("unknown_bundle_topology", 4)
+        if session.history_state not in ("complete", "partial"):
+            raise Failure("cleanup_codec_unverified", 4)
+        artifacts = [path]
+    return CleanupBundle(session.session_uid, profile, root.root_id, artifacts)
+
+
+def usage_counts(raw, mapping, *, claude=False):
+    from ..models import counter
+
+    result = {key: counter(raw.get(native)) for key, native in mapping.items()}
+    if claude:
+        parts = [
+            result.get(key) for key in ("input_tokens", "cache_read_tokens", "cache_write_tokens")
+        ]
+        result["input_tokens"] = sum(parts) if all(v is not None for v in parts) else None
+    if result.get("input_tokens") is not None and result.get("output_tokens") is not None:
+        result["total_tokens"] = result["input_tokens"] + result["output_tokens"]
+    return result
+
+
+def resume_context_verified(root):
+    if root.resume_context != "native" or root.executable_path is None:
+        return False
+    if root.provider in ("grok", "cursor") and root.root_kind == "explicit":
+        home = Path.home() / (".grok" if root.provider == "grok" else ".cursor")
+        child = "sessions" if root.provider == "grok" else "chats"
+        return root.path.resolve() in (home.resolve(), (home / child).resolve())
+    return True
