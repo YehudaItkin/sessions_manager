@@ -1,3 +1,75 @@
+# Native regression fixes — 2026-11-03
+
+This follow-up addresses the owner's failed Claude deletion, missing Codex sessions,
+conflicting shortcuts and missing Grok token values. No personal conversation was
+launched, deleted, restored or purged during verification.
+
+## Result and regression evidence
+
+- Codex `token_count.info=null` no longer drops the whole source. Per-session history/
+  usage exceptions retain metadata and cached history with explicit partial states;
+  transient usage failures are retried. `function_call_output.output` text-block arrays
+  are normalized before compression; non-text/image data is omitted explicitly as partial.
+  These cases reproduced AttributeError, missing/incorrect states and catalog encode
+  failures before the fixes. Corresponding contract/integration tests now pass.
+- Claude version detection uses only a bounded, owner/permission-checked `--version` probe,
+  cached by executable stat identity. Explicit unsupported versions are not overridden;
+  replacement triggers a new probe. Mixed compatible JSONL 2.1.x through 2.1.299 is checked
+  by session ID, UUID, role and content shape, with runtime 2.1.299 still required.
+  The end-to-end TUI test first reproduced cleanup unavailable, then passed move-to-trash
+  and restore after configuration reload without an executable_version setting.
+- Closed per-session workflows are included: matching JSON run identity/terminal status,
+  ordinary local JS copies, and the native `workflows/scripts/` directory. Local script
+  paths are bound to run records without following external scriptPath references.
+  Wrong identities, running workflows, unknown layout and unsafe links remain blocked.
+  Synthetic trash/restore proves byte preservation, untouched neighbors/external scripts,
+  and no JS execution. The original allowlist and flat-directory assumption both failed
+  positive workflow fixtures before their corrections.
+- Keyboard regressions reproduced missing F5/o/r actions. F5 now refreshes, o opens native
+  resume, and r restores only inside Trash. `d` is labeled **Move to trash**; `t` opens
+  Trash; Purge remains separate and confirmed. Default cancel/closed-session safeguards
+  remain in place.
+- Grok native `usage.json.session` totals are now read, with identity checks and root/
+  nested incompleteness flags. Turns/model breakdowns are not added twice. The regression
+  first showed input_tokens=None instead of the expected synthetic 10. Missing usage.json
+  remains not_recorded. Project cwd and stored history location remain independent.
+
+## Checks
+
+- Full suite: **156 passed, 4 skipped**. Three corpus tests and real Warp are opt-in;
+  the three corpus tests were run separately and passed. Ruff check/format pass.
+- Same seed-1 10,000-session / 1,054,646,020-native-byte corpus: fresh catalog **8.591 s**,
+  warm search/navigation **0.823 s**, first PTY TUI frame **1.498 s**; 3 passed.
+  OS cache was not flushed; prior native reads/profile runs may warm it. Under competing
+  load earlier cold runs exceeded 10 seconds (10.490–13.573 s); these were failures,
+  not passing claims. Targets remain 10/2 seconds.
+- Profiling led to bounded binary-line UTF-8 reads, sharing decoded Codex projection text
+  instead of retaining duplicate raw JSON, read-only SQLite mmap bounded to 1 GiB, and reuse
+  of Claude shape validation **only during read-only discovery**. Mutating operations
+  always reread and validate source shape, fingerprints, activity and version.
+- Wheel/sdist build passes. Locked isolated Python 3.12.12 / SQLite 3.53.4 wheel smoke
+  outside the checkout passes: help/version, 40-session refresh/list/show/stats, resume
+  dry-run, cleanup preview, hide/unhide. Native fixture hashes remain unchanged.
+  Wheel SHA-256: `d22bec27412dd27031685cd5eca88c6d4de47e83e4360b8d8d4998513474c02f`.
+- Read-only native verification confirms Codex metadata visible, Claude format eligibility
+  including completed workflows, and populated Grok counters where native files exist.
+  A real PTY over the cached native catalog displays the overview and exits with code 0.
+  These checks do not certify real native resume or destructive native operations.
+
+Compatibility/security sources: [Claude local data](https://code.claude.com/docs/en/claude-directory)
+documents that --version/--help do not create global config; [workflow lifecycle](https://code.claude.com/docs/en/workflows#how-a-workflow-runs)
+describes session-owned script/result storage and the distinction from external scripts.
+Only structural native field/type observations informed synthetic fixtures; no transcript,
+ID, private path, native JS, credential or production catalog is committed.
+
+Pre-merge self-review: requirements, privacy, failure recovery, version drift, truthful
+unknown/partial values, documentation and acceptance evidence checked. These fixes implement
+FR-002/007/009, FR-014–019, FR-020–022 and FR-026; keyboard changes serve FR-001/006/011.
+The owner's prior authorization to publish/merge into the primary branch applies; default
+branch is main. Real AI resume/Warp and the original owner usability gate remain unperformed.
+
+---
+
 # Implementation validation
 
 **Date:** 2026-11-02. **Branch:** `001-session-command-center`. **Version:** 0.1.0.

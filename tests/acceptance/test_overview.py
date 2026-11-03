@@ -9,6 +9,54 @@ from tests.support.claude_factory import make
 
 
 @pytest.mark.asyncio
+async def test_refresh_and_open_have_distinct_keys(isolated, tmp_path, monkeypatch):
+    from sessions_manager.ui.screens import ResumeScreen
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    make(root.path)
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        app = SessionsApp(cfg, catalog)
+        calls = []
+        monkeypatch.setattr(app, "action_refresh", lambda: calls.append("refresh"))
+        async with app.run_test() as pilot:
+            await pilot.press("f5")
+            assert calls == ["refresh"]
+            await pilot.press("o")
+            assert isinstance(app.screen, ResumeScreen)
+
+
+@pytest.mark.asyncio
+async def test_r_restores_only_selected_trash_entry():
+    from textual.app import App
+
+    from sessions_manager.ui.screens import TrashScreen
+
+    chosen = []
+    app = App()
+    async with app.run_test() as pilot:
+        app.push_screen(
+            TrashScreen(
+                [
+                    {
+                        "trash_id": "t-example",
+                        "session_id": "s-example",
+                        "state": "trashed",
+                        "available_actions": ["restore", "purge"],
+                    }
+                ],
+                lambda action, ids: chosen.append((action, ids)),
+            )
+        )
+        await pilot.pause()
+        await pilot.press("r")
+        assert chosen == [("restore", ["t-example"])]
+
+
+@pytest.mark.asyncio
 async def test_tui_ids_and_stable_selection(isolated, tmp_path):
     config, data = isolated
     root = SourceRoot.create("claude", tmp_path / "native")

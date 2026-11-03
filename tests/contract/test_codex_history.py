@@ -66,3 +66,37 @@ def test_projection_changed_after_metadata_is_partial(tmp_path):
         )
     db.close()
     assert reader.read_history(session).state == "partial"
+
+
+def test_tool_output_text_block_array_survives_catalog_transport(tmp_path):
+    from sessions_manager.catalog import Catalog
+    from sessions_manager.config import Config
+    from sessions_manager.discovery import refresh
+    from tests.support.codex_factory import append
+
+    root = SourceRoot.create("codex", tmp_path / "native")
+    path = make(root.path)
+    append(
+        path,
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "id": "result-one",
+                "output": [
+                    {"type": "input_text", "text": "Synthetic tool result"},
+                    {"type": "input_image", "image_url": "SYNTHETIC-PRIVATE-IMAGE"},
+                ],
+            },
+        },
+    )
+    cfg = Config(tmp_path / "manager", tmp_path / "config", [root], "replace")
+    cfg.prepare()
+    with Catalog(cfg.data_dir) as catalog:
+        refresh(cfg, catalog)
+        session = catalog.sessions()[0]
+        events = catalog.events(session.session_uid)
+        result = next(e for e in events if e["role"] == "tool_result")
+        assert "Synthetic tool result" in result["text"]
+        assert session.history_state == "partial"
+        assert "SYNTHETIC-PRIVATE-IMAGE" not in str(events)

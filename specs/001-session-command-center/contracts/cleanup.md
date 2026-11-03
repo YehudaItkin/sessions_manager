@@ -15,8 +15,16 @@ native cascade невозможно связать с точным подтве�
 Менеджер не создаёт видимость удаления через hide и не редактирует общие Codex DB.
 
 Для Claude/Grok/Cursor наличие reader не разрешает cleanup автоматически.
-Требуется явный executable_version в config: соответственно 2.1.299, 1.0.70 или
-2026.10.22-27dcf5f, вместе с проверенной native структурой; synthetic используется только fixtures.
+Claude: поддержанный runtime 2.1.299 определяется через bounded --version probe
+доверенного executable при отсутствии явного executable_version. Кеш привязан к stat
+executable; replacement вызывает повторную проверку. Совместимые JSONL 2.1.x до 2.1.299
+проверяются по session ID/uuid/message role/content, а не двум точным patch-версиям.
+Grok/Cursor требуют явные 1.0.70/2026.10.22-27dcf5f и проверенную native структуру.
+Известный per-session workflows/ включается только при согласованном runId/filename,
+терминальном status и обычных .json/.js файлах; orphan scripts, symlinks и неизвестная
+структура отклоняются. Внешний scriptPath не обходится и не удаляется; JS не исполняется.
+Неизвестные версии, unsafe executable и failed probe остаются unavailable.
+synthetic используется только fixtures. Restore/retry в новом процессе повторно resolves version.
 Capability появляется только после fixture-backed доказательства session-owned artifact set,
 известной topology, writer/quiescence conditions и no-overwrite восстановления.
 Неизвестный формат, shared dependency без безопасной границы, unsupported no-replace или

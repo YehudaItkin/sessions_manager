@@ -76,7 +76,11 @@ class CleanupScreen(ModalScreen):
 
         with VerticalScroll():
             yield Static(
-                "IRREVERSIBLE PURGE" if self.plan["action"] == "purge" else "Exact cleanup preview",
+                {
+                    "purge": "IRREVERSIBLE PURGE",
+                    "trash": "Move selected sessions to trash",
+                    "restore": "Restore selected sessions",
+                }[self.plan["action"]],
                 markup=False,
             )
             yield Static(
@@ -115,7 +119,7 @@ class CleanupScreen(ModalScreen):
 
 
 class TrashScreen(ModalScreen):
-    BINDINGS = [("escape", "cancel", "Close")]
+    BINDINGS = [("escape", "cancel", "Close"), ("r", "restore", "Restore")]
 
     def __init__(self, items, on_action):
         super().__init__()
@@ -128,7 +132,7 @@ class TrashScreen(ModalScreen):
         yield Static("Manager trash: exact recoverable entries and recovery states", markup=False)
         yield DataTable(id="trash-table", cursor_type="row")
         yield Button("Close", id="cancel")
-        yield Button("Restore selected", id="restore")
+        yield Button("Restore selected (r)", id="restore")
         yield Button("Purge selected (irreversible)", id="purge", variant="error")
 
     def on_mount(self):
@@ -150,17 +154,26 @@ class TrashScreen(ModalScreen):
         self.dismiss(None)
 
     def on_button_pressed(self, event):
-        from textual.widgets import DataTable
-
         if event.button.id == "cancel":
             self.dismiss(None)
             return
+        self.selected_action(event.button.id)
+
+    def action_restore(self):
+        self.selected_action("restore")
+
+    def selected_action(self, action):
+        from textual.widgets import DataTable
+
         table = self.query_one(DataTable)
         if not table.row_count:
             return
         key = str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
+        item = next(row for row in self.items if row["trash_id"] == key)
+        if action not in item["available_actions"]:
+            return
         self.dismiss(None)
-        self.on_action(event.button.id, [key])
+        self.on_action(action, [key])
 
 
 class DetailsScreen(ModalScreen):

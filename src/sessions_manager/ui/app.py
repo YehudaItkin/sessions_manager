@@ -10,14 +10,14 @@ class SessionsApp(App):
     TITLE = "Sessions Manager"
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("R", "refresh", "Refresh"),
+        ("f5", "refresh", "Refresh"),
         ("enter", "details", "Details"),
         ("/", "search", "Search"),
         ("f", "filters", "Filters"),
         ("escape", "reset", "Reset"),
-        ("r", "resume", "Resume"),
+        ("o", "resume", "Open"),
         ("h", "hide", "Hide/unhide"),
-        ("d", "delete", "Delete"),
+        ("d", "delete", "Move to trash"),
         ("t", "trash", "Trash"),
         ("s", "statistics", "Statistics"),
         ("v", "scope", "Scope"),
@@ -36,7 +36,7 @@ class SessionsApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("Cached catalog; R refreshes configured roots", id="status", markup=False)
+        yield Static("Cached catalog; F5 refreshes configured roots", id="status", markup=False)
         yield Input(placeholder="Literal search; Enter applies, Escape resets", id="query")
         yield DataTable(id="sessions", cursor_type="row")
         yield Footer()

@@ -278,6 +278,8 @@ class HistoryEvent:
         ):
             raise ValueError("invalid history role")
         counter(self.ordinal)
+        if self.text is not None and not isinstance(self.text, str):
+            raise ValueError("invalid history text")
 
 
 @dataclass

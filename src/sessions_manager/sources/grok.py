@@ -244,6 +244,11 @@ class Adapter:
             return UsageResult(state="unavailable", reason="not_recorded")
         try:
             raw = json_file(path)
+            if raw.get("sessionId") not in (None, session.native_id):
+                return UsageResult(state="partial", reason="usage_identity_mismatch")
+            totals = raw.get("session", raw)
+            if not isinstance(totals, dict):
+                return UsageResult(state="partial", reason="invalid_usage")
             mapping = {
                 "input_tokens": "inputTokens",
                 "output_tokens": "outputTokens",
@@ -252,8 +257,14 @@ class Adapter:
                 "reasoning_tokens": "reasoningTokens",
                 "total_tokens": "totalTokens",
             }
-            values = usage_counts(raw, mapping)
-            state = "partial" if raw.get("usageIsIncomplete") else "complete"
+            values = usage_counts(totals, mapping)
+            if all(value is None for value in values.values()):
+                return UsageResult(state="unavailable", reason="unsupported_usage_schema")
+            state = (
+                "partial"
+                if raw.get("usageIsIncomplete") or totals.get("usageIsIncomplete")
+                else "complete"
+            )
             snapshot = UsageSnapshot(
                 session.session_uid,
                 "grok-session:" + session.native_id,

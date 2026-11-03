@@ -3,6 +3,15 @@ from sessions_manager.sources.codex import Adapter
 from tests.support.codex_factory import append, make
 
 
+def test_null_token_count_info_is_optional_not_a_source_failure(tmp_path):
+    path = make(tmp_path)
+    append(path, {"type": "event_msg", "payload": {"type": "token_count", "info": None}})
+    reader = Adapter(SourceRoot.create("codex", tmp_path))
+    usage = reader.read_usage(reader.discover().sessions[0])
+    assert usage.state == "unavailable"
+    assert usage.reason == "not_recorded"
+
+
 def test_receipts_not_snapshots_and_foreign_owner(tmp_path):
     path = make(tmp_path)
     record = {

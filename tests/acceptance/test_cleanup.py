@@ -5,6 +5,58 @@ from sessions_manager.ui.screens import CleanupScreen
 
 
 @pytest.mark.asyncio
+async def test_default_claude_delete_and_restore_without_version_config(isolated, tmp_path):
+    from sessions_manager.catalog import Catalog
+    from sessions_manager.config import Config
+    from sessions_manager.discovery import refresh
+    from sessions_manager.models import SourceRoot
+    from sessions_manager.ui.app import SessionsApp
+    from sessions_manager.ui.screens import TrashScreen
+    from tests.support.claude_factory import make
+    from tests.support.cleanup_case import version_cli
+
+    config, data = isolated
+    binary = version_cli(tmp_path)
+    root = SourceRoot.create("claude", tmp_path / "native", executable_path=binary)
+    path = make(root.path)
+    path.write_text(path.read_text().replace('"version": "2.1.263"', '"version": "2.1.211"', 1))
+    neighbor = make(root.path, "neighbor", message_id="neighbor-answer")
+    before, neighbor_before = path.read_bytes(), neighbor.read_bytes()
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        row = next(s for s in catalog.sessions() if s.native_id == "claude-one")
+        assert row.capabilities["cleanup"].state == "supported"
+        app = SessionsApp(cfg, catalog)
+        async with app.run_test(size=(120, 40)) as pilot:
+            table = app.query_one("#sessions")
+            table.move_cursor(row=table.get_row_index(row.session_uid))
+            await pilot.press("d")
+            assert isinstance(app.screen, CleanupScreen)
+            app.screen.query_one("#closed").value = True
+            app.screen.query_one("#confirm").press()
+            await pilot.pause()
+            assert not path.exists() and neighbor.read_bytes() == neighbor_before
+            await pilot.press("escape")
+            # A new invocation has no configured/detected version yet.
+            app.config = Config(
+                data,
+                config,
+                [SourceRoot.create("claude", root.path, executable_path=binary)],
+                "replace",
+            )
+            await pilot.press("t")
+            assert isinstance(app.screen, TrashScreen)
+            await pilot.press("r")
+            assert isinstance(app.screen, CleanupScreen)
+            app.screen.query_one("#confirm").press()
+            await pilot.pause()
+            assert path.read_bytes() == before
+            assert neighbor.read_bytes() == neighbor_before
+
+
+@pytest.mark.asyncio
 async def test_destructive_modal_defaults_to_cancel():
     app = App()
     async with app.run_test() as pilot:

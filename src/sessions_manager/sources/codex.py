@@ -141,12 +141,21 @@ class Adapter:
                             for row in reader.read(table, sorted(tables[table])):
                                 self._projection[row["thread_id"]].append(row)
             for row in self._projection.get(session.native_id, []):
-                item = json.loads(row["item_json"])
+                item = row["item_json"]
+                if isinstance(item, str):
+                    item = json.loads(item)
+                    # Share decoded text with normalized events, releasing large raw JSON.
+                    row["item_json"] = item
+                if not isinstance(item, dict):
+                    state = "partial"
+                    continue
                 event = self._item(
                     session, item, row["item_id"], row["rollout_ordinal"], row.get("created_at_ms")
                 )
                 if event:
                     event.turn_id = row.get("turn_id")
+                    if event.completeness != "complete":
+                        state = "partial"
                 if event is None:
                     state = "partial"
                 else:
@@ -171,6 +180,8 @@ class Adapter:
                         )
                         if event:
                             events[native] = event
+                            if event.completeness != "complete":
+                                state = "partial"
                         else:
                             state = "partial"
                     elif row.get("type") in ("compacted",):
@@ -199,6 +210,7 @@ class Adapter:
         kind = item.get("type")
         role = None
         text = None
+        completeness = "complete"
         if kind in ("userMessage", "message"):
             role = item.get("role", "user") if kind == "message" else "user"
             if role not in ("user", "assistant"):
@@ -222,9 +234,24 @@ class Adapter:
         elif kind in ("function_call_output",):
             role = "tool_result"
             text = item.get("output")
+            if isinstance(text, list):
+                pieces = []
+                for block in text:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") in ("text", "input_text", "output_text")
+                        and isinstance(block.get("text"), str)
+                    ):
+                        pieces.append(block["text"])
+                    else:
+                        pieces.append("[Non-text content omitted]")
+                        completeness = "partial"
+                text = "\n".join(pieces)
         elif kind in ("reasoning", "contextCompaction"):
             return None
         else:
+            return None
+        if text is not None and not isinstance(text, str):
             return None
         return HistoryEvent(
             identity(session.namespace_id, session.native_id, native),
@@ -234,6 +261,7 @@ class Adapter:
             timestamp=created,
             native_id=native,
             locator=session.locator,
+            completeness=completeness,
         )
 
     def prepare_cleanup_bundle(self, session):
@@ -270,6 +298,9 @@ class Adapter:
         try:
             for ordinal, row in json_lines(path):
                 payload = row.get("payload", {})
+                if not isinstance(payload, dict):
+                    result.state = "partial"
+                    continue
                 if row.get("type") == "token_usage_record" and isinstance(
                     payload.get("usage"), dict
                 ):
@@ -304,7 +335,13 @@ class Adapter:
                     if owner != session.native_id:
                         result.state = "partial"
                 elif row.get("type") == "event_msg" and payload.get("type") == "token_count":
-                    raw = payload.get("info", {}).get("total_token_usage")
+                    info = payload.get("info")
+                    if info is None:
+                        continue
+                    if not isinstance(info, dict):
+                        result.state = "partial"
+                        continue
+                    raw = info.get("total_token_usage")
                     if isinstance(raw, dict):
                         values = usage_counts(raw, mapping)
                         if snapshot and any(

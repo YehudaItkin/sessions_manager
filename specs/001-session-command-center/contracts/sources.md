@@ -52,6 +52,11 @@ native argv действуют только при подтверждённой 
 
 ## Codex profile: 0.166.0 paginated
 
+Пустой token_count.info допустим и не скрывает metadata. Ошибка history/usage одной
+сессии ограничивается этой capability; предыдущая история сохраняется как partial.
+Tool outputs в виде text-block arrays нормализуются в текст; non-text блоки явно
+пропускаются с partial и без копирования opaque/image payload.
+
 Metadata: state_5.sqlite threads; identity=id; cwd/title/preview/name/model;
 created/updated/recency timestamps с предпочтением *_ms перед seconds.
 History: thread_history_1.sqlite tables:
@@ -115,7 +120,10 @@ Resume: absolute_claude, --resume, native_id; process cwd и доказанны�
 Полный transcript path допустим только в проверенном native path-resume profile.
 Никакого --continue, --fork-session, rm-background-runtime или project purge.
 
-Cleanup manifest включает только точный transcript и доказанно session-owned companions.
+Cleanup manifest включает точный transcript и доказанно session-owned companions:
+subagents/, tool-results/ и закрытые runs в workflows/. Script/run files остаются
+неисполняемыми данными, внешние scriptPath не входят в bundle.
+Официальная семантика per-session script/result storage: [Dynamic workflows](https://code.claude.com/docs/en/workflows#how-a-workflow-runs).
 Project directory, shared history.jsonl, stats-cache.json и пользовательские файлы проекта
 не входят. Неизвестные ссылки, sidechains/dependencies или права делают cleanup unavailable.
 
@@ -132,7 +140,7 @@ prompt IDs. eventId — packet identity и сам по себе не разде�
 содержит eventId/agentTimestampMs/promptId. chat_history.jsonl — альтернативное представление, не второй независимый чат.
 System/compaction материал не увеличивает user message count.
 
-Usage: usage.json session totals единожды; turns/modelUsage — перекрывающиеся представления.
+Usage: usage.json.session session totals единожды (старый плоский JSON также читается); turns/modelUsage — перекрывающиеся представления.
 Недостающие поля, usageIsIncomplete/costIsPartial учитываются. signals contextTokensUsed
 и contextWindowUsage не lifetime расход.
 

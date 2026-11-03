@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,8 +61,11 @@ def json_file(path: Path):
 
 
 def json_lines(path: Path):
-    with path.open("r", encoding="utf-8") as stream:
-        for ordinal, line in enumerate(stream):
+    # Native messages can be hundreds of KiB. Read complete byte lines with a
+    # bounded buffer, then decode UTF-8 strictly rather than many tiny text reads.
+    with path.open("rb", buffering=262144) as stream:
+        for ordinal, raw_line in enumerate(stream):
+            line = raw_line.decode("utf-8")
             if line.strip():
                 try:
                     value = json.loads(line)
@@ -93,6 +97,61 @@ def directory_inventory(path):
     return inventory, sum(i["size"] for i in inventory.values()) if complete else None
 
 
+def claude_cleanup_shape(rows, native_id):
+    for row in rows:
+        if row.get("type") not in ("user", "assistant"):
+            continue
+        patch = re.fullmatch(r"2\.1\.([0-9]+)", str(row.get("version", "")))
+        message = row.get("message")
+        if (
+            not patch
+            or int(patch.group(1)) > 299
+            or row.get("sessionId", row.get("session_id")) != native_id
+            or not isinstance(row.get("uuid"), str)
+            or not isinstance(message, dict)
+            or message.get("role") not in ("user", "assistant")
+            or not isinstance(message.get("content"), (str, list))
+        ):
+            return False
+    return True
+
+
+def claude_workflows(path):
+    """Only closed per-session run records and their local script copies; never execute JS."""
+    if path.is_symlink() or not path.is_dir():
+        raise Failure("unknown_bundle_topology", 4)
+    runs, scripts, referenced_scripts = set(), set(), set()
+    for entry in path.iterdir():
+        if entry.name == "scripts" and not entry.is_symlink() and entry.is_dir():
+            for script in entry.iterdir():
+                if script.is_symlink() or not script.is_file() or script.suffix != ".js":
+                    raise Failure("unknown_bundle_topology", 4)
+                scripts.add(script)
+            continue
+        if entry.is_symlink() or not entry.is_file() or entry.suffix not in (".json", ".js"):
+            raise Failure("unknown_bundle_topology", 4)
+        if entry.suffix == ".js":
+            scripts.add(entry)
+            continue
+        row = json_file(entry)
+        if row.get("runId") != entry.stem or not isinstance(row.get("phases"), list):
+            raise Failure("unknown_bundle_topology", 4)
+        if row.get("status") not in ("completed", "failed", "stopped", "interrupted", "cancelled"):
+            raise Failure("workflow_not_closed", 5)
+        runs.add(entry.stem)
+        script_path = row.get("scriptPath")
+        if isinstance(script_path, str):
+            candidate = Path(script_path)
+            # Compare the path as data; never follow a reference outside this bundle.
+            if candidate.parent in (path, path / "scripts") and candidate.suffix == ".js":
+                referenced_scripts.add(candidate)
+    identified_scripts = {
+        script for script in scripts if script.parent == path and script.stem in runs
+    }
+    if not scripts <= identified_scripts | referenced_scripts:
+        raise Failure("unknown_bundle_topology", 4)
+
+
 def prepare_cleanup_bundle(root, session, *, common_checks=None):
     from ..models import CleanupBundle
 
@@ -104,7 +163,9 @@ def prepare_cleanup_bundle(root, session, *, common_checks=None):
     if root.provider == "codex":
         raise Failure("native_cascade_unbounded", 4)
     profile, version = expected[root.provider]
-    if session.profile != profile or root.executable_version not in (version, "synthetic"):
+    from .native_version import resolve_cleanup_version
+
+    if session.profile != profile or resolve_cleanup_version(root) not in (version, "synthetic"):
         raise Failure("cleanup_profile_unverified", 4)
     if session.capabilities["cleanup"].state == "unsafe":
         raise Failure(session.capabilities["cleanup"].reason or "unsafe_bundle", 5)
@@ -120,15 +181,22 @@ def prepare_cleanup_bundle(root, session, *, common_checks=None):
         artifacts = [path]
         companion = path.with_suffix("")
         if companion.exists():
-            if any(p.name not in {"subagents", "tool-results"} for p in companion.iterdir()):
-                raise Failure("unknown_bundle_topology", 4)
-            artifacts.append(companion)
-        for _, row in json_lines(path):
-            if row.get("type") in ("user", "assistant") and row.get("version") not in (
-                "2.1.210",
-                "2.1.263",
+            if any(
+                p.name not in {"subagents", "tool-results", "workflows"}
+                for p in companion.iterdir()
             ):
-                raise Failure("cleanup_profile_unverified", 4)
+                raise Failure("unknown_bundle_topology", 4)
+            if (companion / "workflows").exists() or (companion / "workflows").is_symlink():
+                claude_workflows(companion / "workflows")
+            artifacts.append(companion)
+        verified = (
+            getattr(session, "_cleanup_shape_verified", None) if common_checks is not None else None
+        )
+        # Discovery already parsed these rows. Mutating operations always read them afresh.
+        if verified is None:
+            verified = claude_cleanup_shape((row for _, row in json_lines(path)), session.native_id)
+        if not verified:
+            raise Failure("cleanup_profile_unverified", 4)
     elif root.provider == "grok":
         home = root.path / "sessions" if (root.path / "sessions").exists() else root.path
 

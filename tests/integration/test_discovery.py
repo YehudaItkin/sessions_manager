@@ -5,6 +5,62 @@ from sessions_manager.models import SourceRoot
 from tests.support.claude_factory import make
 
 
+def test_one_usage_failure_keeps_every_session_and_cached_history(isolated, tmp_path, monkeypatch):
+    from sessions_manager.sources.claude import Adapter
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    path = make(root.path, "one")
+    make(root.path, "two", message_id="other-answer")
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        uid = next(s.session_uid for s in catalog.sessions() if s.native_id == "one")
+        before = catalog.events(uid)
+        path.write_text(path.read_text() + "\n")
+
+        def broken(self, session):
+            if session.native_id == "one":
+                raise AttributeError("synthetic private payload")
+            return original(self, session)
+
+        original = Adapter.read_usage
+        monkeypatch.setattr(Adapter, "read_usage", broken)
+        refresh(cfg, catalog)
+        assert {s.native_id for s in catalog.sessions()} == {"one", "two"}
+        assert catalog.get(uid).usage_state == "partial"
+        assert catalog.get(uid).history_state == "complete"
+        assert catalog.events(uid) == before
+        monkeypatch.setattr(Adapter, "read_usage", original)
+        refresh(cfg, catalog)
+        assert catalog.get(uid).usage_state == "complete"
+
+
+def test_history_failure_preserves_metadata_and_previous_events(isolated, tmp_path, monkeypatch):
+    from sessions_manager.sources.claude import Adapter
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    path = make(root.path)
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        uid = catalog.sessions()[0].session_uid
+        before = catalog.events(uid)
+        path.write_text(path.read_text() + "\n")
+
+        def broken(self, session):
+            raise TypeError("synthetic private payload")
+
+        monkeypatch.setattr(Adapter, "read_history", broken)
+        refresh(cfg, catalog)
+        assert catalog.get(uid).history_state == "partial"
+        assert catalog.get(uid).presence == "present"
+        assert catalog.events(uid) == before
+
+
 def test_selected_provider_refresh_not_display_filter(isolated, tmp_path):
     path, data = isolated
     a = SourceRoot.create("claude", tmp_path / "claude")
