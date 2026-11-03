@@ -7,6 +7,19 @@ from sessions_manager.models import SourceRoot
 from tests.support import claude_factory, codex_factory, cursor_factory, grok_factory
 
 
+def version_cli(tmp_path, version="2.1.299"):
+    import sys
+
+    path = tmp_path / "fake-claude"
+    path.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "if sys.argv[1:] != ['--version']: raise SystemExit(99)\n"
+        f"print({(version + ' (Claude Code)')!r})\n"
+    )
+    path.chmod(0o700)
+    return path
+
+
 @contextmanager
 def case(tmp_path, provider="claude"):
     factory = {

@@ -184,8 +184,11 @@ credentials и generated fixture corpora; коммитятся только ко
 Матрица версий, config и клавиши TUI приведены в [README](../../README.md).
 `f` включает направление сортировки, `v` меняет scope, `Space` задаёт batch.
 TUI stats предлагает source/project/day; show включает usage и capabilities.
-Произвольные explicit Grok/Cursor roots остаются view-only. Для cleanup требуется явный
-поддержанный executable_version и проверенный bundle; Codex cleanup недоступен.
+Произвольные explicit Grok/Cursor roots остаются view-only. Для Claude cleanup версия определяется через --version (или задаётся явно);
+Grok/Cursor требуют явный поддержанный executable_version. Всегда нужен проверенный bundle; Codex cleanup недоступен.
 Все варианты автоматического relocated-cwd resume пока отклоняются.
 JSON foreground resume сохраняет один envelope в stdout, вывод child направляет в stderr.
 Нативные разговоры автоматически ради приёмки не запускаются.
+
+Клавиши после исправлений 2026-11-03: F5 — refresh, o — открыть исходный CLI,
+r только внутри корзины — restore; d — Move to trash, t — показать корзину.

@@ -119,9 +119,9 @@ Purge требует отдельного предупреждения о нео
 Первый экран: ID менеджера (display_id), родной ID (native_id), provider, title/preview,
 project, last activity, current activity,
 capabilities; отдельно progress, stale/partial source status, hidden/trash counts.
-Поиск и фильтры доступны без выхода. Enter — детали; / — поиск; r — resume;
-R — refresh; f — filters/sort; Esc — reset; v — scope; Space — batch selection;
-h — hide/unhide; d — preview delete; s — statistics (source/project/day); t — trash; q — выход.
+Поиск и фильтры доступны без выхода. Enter — детали; / — поиск; o — open/resume;
+F5 — refresh; r внутри корзины — restore; f — filters/sort; Esc — reset; v — scope; Space — batch selection;
+h — hide/unhide; d — Move to trash (preview delete); s — statistics (source/project/day); t — trash; q — выход.
 Выбор привязан к ID, не позиции строки при пересортировке.
 История выводится literal text без Rich markup/ANSI/OSC исполнения.
 Диалог цели запуска предлагает current и Warp явно. Выход из native CLI возвращает

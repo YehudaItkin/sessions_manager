@@ -1054,3 +1054,12 @@ documentation gates T099–T102 обязательны для всей feature.
   и опциональный harmless Warp runtime фиксируются раздельно; отсутствие проверки — не passing.
 - Изменения versioned source contracts/documentation публикуются через GitHub branch/PR
   с целью, validation и ограничениями; secrets, личные истории и private corpora не коммитятся.
+
+## Follow-up: native-data regressions (2026-11-03)
+
+- [X] T103 Reproduce Codex null usage, per-capability scan failure, default Claude cleanup and shortcut conflicts with synthetic regression tests in `tests/contract/`, `tests/integration/`, `tests/acceptance/`.
+- [X] T104 Keep Codex metadata visible when optional usage/history is absent or invalid; preserve cached history on capability read failure in `src/sessions_manager/sources/codex.py` and `src/sessions_manager/discovery.py`.
+- [X] T105 Resolve Claude cleanup runtime version without configuration edits, validate compatible mixed 2.1 JSONL shapes/closed workflow bundles, and keep fresh version/topology/activity checks for trash and restore in `src/sessions_manager/sources/base.py` and `src/sessions_manager/cleanup.py`.
+- [X] T106 Replace case-sensitive refresh/resume shortcuts with F5 refresh, o open/resume and r restore within trash in `src/sessions_manager/ui/app.py` and `src/sessions_manager/ui/screens.py`; cover actual keyboard actions.
+- [X] T107 Investigate Grok missing token metrics and project/history locations; preserve explicit not-recorded values when no native ledger exists. Update regression fixtures if a supported format was missed.
+- [X] T108 Run relevant/full checks and read-only native verification; update README/contracts/validation and submit fixes through GitHub. Do not test deletion on personal sessions.

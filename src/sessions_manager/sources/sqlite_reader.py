@@ -34,7 +34,7 @@ class NativeSQLite:
             self.connection.execute("PRAGMA query_only=ON")
             self.connection.execute("PRAGMA trusted_schema=OFF")
             self.connection.execute("PRAGMA busy_timeout=100")
-            self.connection.execute("PRAGMA mmap_size=268435456")
+            self.connection.execute("PRAGMA mmap_size=1073741824")
             table_types = {
                 r[1]: r[2] for r in self.connection.execute("PRAGMA table_list") if r[0] == "main"
             }

@@ -56,6 +56,9 @@ class Adapter:
                 fingerprint=fingerprint(path),
                 known_bytes=path.stat().st_size,
             )
+            from .base import claude_cleanup_shape
+
+            session._cleanup_shape_verified = claude_cleanup_shape(rows, native)
             session.capabilities["metadata"] = Capability("supported")
             if resume_context_verified(self.root):
                 session.capabilities["resume"] = Capability("supported")

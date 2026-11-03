@@ -8,6 +8,8 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from .models import Failure
 from .sources.base import ScanResult
 
+READ_ERRORS = (OSError, Failure, ValueError, TypeError, KeyError, AttributeError, sqlite3.Error)
+
 
 def adapter(root):
     return importlib.import_module("sessions_manager.sources." + root.provider).Adapter(root)
@@ -46,14 +48,22 @@ def scan_root(argument):
                 if compare_identity:
                     session.extra["identity_digest"] = old.extra.get("identity_digest")
             else:
-                history = reader.read_history(session)
-                session.history_state = session.search_state = history.state
-                session.capabilities["history"] = session.capabilities["search"] = Capability(
-                    "supported" if history.state in ("complete", "partial") else "unavailable",
-                    history.reason,
-                )
-                result.histories[session.session_uid] = history
-                if compare_identity and history.state == "complete":
+                try:
+                    history = reader.read_history(session)
+                except READ_ERRORS:
+                    history = None
+                    session.history_state = session.search_state = "partial"
+                    session.capabilities["history"] = session.capabilities["search"] = Capability(
+                        "unavailable", "history_read_failed"
+                    )
+                if history is not None:
+                    session.history_state = session.search_state = history.state
+                    session.capabilities["history"] = session.capabilities["search"] = Capability(
+                        "supported" if history.state in ("complete", "partial") else "unavailable",
+                        history.reason,
+                    )
+                    result.histories[session.session_uid] = history
+                if compare_identity and history is not None and history.state == "complete":
                     import hashlib
 
                     checksum = hashlib.sha256((session.cwd or "").encode())
@@ -63,25 +73,33 @@ def scan_root(argument):
                         checksum.update((event.text or "").encode())
                     session.extra["identity_digest"] = checksum.hexdigest()
             session.extra["normalizer_version"] = NORMALIZER_VERSION
-            if unchanged and old.extra.get("usage_version") == "2":
+            if unchanged and old.extra.get("usage_version") == "3" and old.usage_state != "partial":
                 session.usage_state = old.usage_state
                 session.capabilities["usage"] = old.capabilities["usage"]
             else:
-                usage = reader.read_usage(session)
-                session.usage_state = usage.state
-                session.capabilities["usage"] = Capability(
-                    "supported" if usage.state in ("complete", "partial") else "unavailable",
-                    usage.reason,
-                )
-                result.usages[session.session_uid] = usage
-            session.extra["usage_version"] = "2"
+                try:
+                    usage = reader.read_usage(session)
+                except READ_ERRORS:
+                    session.usage_state = "partial"
+                    session.capabilities["usage"] = Capability("unavailable", "usage_read_failed")
+                else:
+                    session.usage_state = usage.state
+                    session.capabilities["usage"] = Capability(
+                        "supported" if usage.state in ("complete", "partial") else "unavailable",
+                        usage.reason,
+                    )
+                    result.usages[session.session_uid] = usage
+            session.extra["usage_version"] = "3"
             try:
                 prepare_cleanup_bundle(root, session, common_checks=cleanup_checks)
                 session.capabilities["cleanup"] = Capability("supported")
-            except Failure as failure:
-                session.capabilities["cleanup"] = Capability("unavailable", failure.code)
+            except READ_ERRORS as failure:
+                session.capabilities["cleanup"] = Capability(
+                    "unavailable",
+                    failure.code if isinstance(failure, Failure) else "cleanup_read_failed",
+                )
         return result
-    except (OSError, Failure, ValueError, TypeError, KeyError, AttributeError, sqlite3.Error):
+    except READ_ERRORS:
         return ScanResult(complete=False, reason="source_unavailable")
 
 

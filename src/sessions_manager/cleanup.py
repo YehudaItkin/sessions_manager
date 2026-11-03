@@ -56,6 +56,9 @@ class CleanupService:
         root = next((r for r in self.config.roots if r.root_id == root_id and r.enabled), None)
         if root is None:
             raise Failure("source_root_unavailable", 5)
+        from .sources.native_version import resolve_cleanup_version
+
+        resolve_cleanup_version(root)
         return root
 
     def _ids(self, action, ids):
