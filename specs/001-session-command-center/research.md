@@ -264,3 +264,50 @@ Ruff используется только как dev dependency для lint/for
 Все вопросы Technical Context получили решения R1–R12. Продуктовых уточнений не осталось.
 Оставшиеся fixture/runtime/performance проверки — обязательные gates реализации, а не
 заявление, что приложение, безопасная mutation или производительность уже подтверждены.
+
+## R14. Native compatibility follow-up — 2026-11-03
+
+Installed Cursor 2026.10.22 descriptors identify agent.v1 conversation turns (agent=1,
+shell=2), root turn references=8 and raw 32-byte hash references. SQLite blob keys are
+hex. No vendor JS is executed/imported by the reader. Three native chats lack meta.json
+but have valid SQLite metadata. Sibling schemaVersion=1 cwd evidence agrees with native
+MD5 workspace directory identity; only that evidence is used, never reverse guessing.
+Unknown turns/steps remain partial while later supported history is retained.
+
+Installed CLI --version probes confirm Grok 1.0.70, Cursor 2026.10.22-27dcf5f and Codex
+0.166.0. The existing trusted, stat-keyed, two-second version-only probe now recognizes
+all four tools; explicit configuration remains authoritative. This does not expand native
+mutation topology. Grok's shared session_search.sqlite has ordinary session_docs plus
+FTS shadow tables; 83 indexed sessions overlap managed file histories. Its legacy grok.db
+contains five separate sessions. Neither shared store is moved, rebuilt or modified.
+Deleting only the per-session directory would leave a second history copy in the index;
+therefore cleanup remains disabled where these shared dependencies exist. Native Grok
+sessions delete has no local-only scope/rollback flag and is not substituted for trash.
+[Native persistence source](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/persistence.rs)
+also identifies session_search.sqlite at the shared sessions root. Observed installed
+layout and behavior remain the gating evidence; a newer source commit is not assumed
+identical to this installed build.
+
+The installed Codex app-server JSON schemas expose thread/archive, thread/unarchive and
+thread/delete with threadId only: no expected revision/descendant closure/nonrecursive
+scope. Reversible archive/unarchive succeeds for an isolated synthetic thread and preserves
+an unrelated neighbor, but this does not establish safe cascade bounds on real graphs.
+The existing cleanup restriction is retained, with a human explanation and Hide alternative.
+No direct native shared DB writes/whole-DB rollback are introduced.
+
+For Codex 0.166.0 paginated, an isolated native store proves a separate rollout is not
+required when persisted thread items establish context. A metadata-only stale row does
+not enable resume. After native restart, exact-ID resume loads the synthetic recorded user context.
+After renaming the project, actual CLI resume under a PTY loads the same context, persists
+the same ID with new cwd, leaves the neighbor intact and creates no extra session.
+`tests.support.verify_native_codex` reproduces this using a fresh private CODEX_HOME,
+unchanged HOME, no copied credentials and a synthetic model provider on closed loopback
+port 9. This proves the specific paginated resume profile, not cleanup or other tools.
+
+The authorized harmless Warp gate failed on 0.2026.10.21.08.25.02: /usr/bin/open accepted
+the documented Tab Config URI, but the ticket stayed requested and the fixture child did
+not start within 20 seconds. The generated launcher imports successfully from directory /
+and TOML agrees with the [documented schema](https://docs.warp.dev/terminal/windows/tab-configs/).
+The cause inside Warp is unverified; a version/feature mismatch is only a hypothesis.
+Computer Use denied access to Warp, and no alternate UI automation was used. The manager
+retains delivered != loaded and now displays an actionable Current terminal alternative.

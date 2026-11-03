@@ -242,3 +242,18 @@ Release gates:
 Нарушений конституции и разрешений на её обход нет. Bounded Cursor wire reader,
 операционный журнал и launch helper обоснованы конкретными native форматами и рисками
 R6/R10/R11; это части одного приложения, не отдельные сервисы.
+
+## Native compatibility amendment — 2026-11-03
+
+Existing bounded readers/version probe are extended; no dependency or service is added.
+Cursor projects binary hash refs and shell turns without vendor JS execution; missing
+sidecars use verified workspace evidence. Codex selects whitelisted history_mode and
+allows 0.166.0 paginated resume without rollout/new cwd after an isolated native gate.
+Human explanations are a presentation-only mapping; JSON contracts and journals retain
+stable codes. Shared native DB writes, Grok remote delete and Codex cascade mutations
+remain excluded because exact local scope/recovery is not established.
+
+Constitution recheck: changes trace to T109–T116 and spec amendments; regression tests
+fail before implementation; no personal history is modified or committed. Native gate
+uses fresh private roots/offline loopback and no credentials. Review/merge remains via
+GitHub PR; Warp failed gate is explicit, never reported as a pass.

@@ -185,10 +185,23 @@ credentials и generated fixture corpora; коммитятся только ко
 `f` включает направление сортировки, `v` меняет scope, `Space` задаёт batch.
 TUI stats предлагает source/project/day; show включает usage и capabilities.
 Произвольные explicit Grok/Cursor roots остаются view-only. Для Claude cleanup версия определяется через --version (или задаётся явно);
-Grok/Cursor требуют явный поддержанный executable_version. Всегда нужен проверенный bundle; Codex cleanup недоступен.
-Все варианты автоматического relocated-cwd resume пока отклоняются.
+Grok/Cursor также определяют версию автоматически; явный executable_version остаётся override. Всегда нужен проверенный bundle; Codex cleanup недоступен.
+Codex 0.166.0 history_mode=paginated допускает новый cwd после native gate; остальные
+relocated-cwd профили пока отклоняются.
 JSON foreground resume сохраняет один envelope в stdout, вывод child направляет в stderr.
 Нативные разговоры автоматически ради приёмки не запускаются.
 
 Клавиши после исправлений 2026-11-03: F5 — refresh, o — открыть исходный CLI,
 r только внутри корзины — restore; d — Move to trash, t — показать корзину.
+
+## 10. Воспроизводимая native Codex проверка
+
+```sh
+uv run python -m tests.support.verify_native_codex --executable /absolute/path/to/codex
+```
+
+Только opt-in для 0.166.0. Скрипт создаёт новый private offline CODEX_HOME в temp,
+не читает credentials и не запускает личные сессии. Ожидаемый receipt: same_identity,
+history_loaded_after_restart, archive_unarchive, neighbor_preserved, missing_original_cwd,
+cli_resume_loaded_context=true; new_sessions_from_resume=0.
+Warp `--run-warp` на установленной 0.2026.10.21 не прошёл; не считать его passing gate.

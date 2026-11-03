@@ -112,3 +112,28 @@ def test_custom_native_home_without_supported_context_override_is_view_only(
     session = adapter(root).discover().sessions[0]
     with pytest.raises(Failure, match="resume_binding_unverified"):
         build_request(root, session, tmp_path / "manager")
+
+
+def test_verified_codex_profile_keeps_identity_with_relocated_cwd(tmp_path, fake_executable):
+    native = tmp_path / "codex"
+    path = codex_factory.make(native, rollout=False)
+    import sqlite3
+
+    with sqlite3.connect(native / "state_5.sqlite") as db:
+        db.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT")
+        db.execute("UPDATE threads SET history_mode='paginated'")
+    root = SourceRoot.create(
+        "codex",
+        native,
+        resume_context="native",
+        executable_path=fake_executable,
+        executable_version="0.166.0",
+    )
+    session = adapter(root).discover().sessions[0]
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    request = build_request(root, session, tmp_path / "manager", cwd=moved)
+    assert request.argv[1:] == ["resume", session.native_id, "-C", str(moved)]
+    assert request.history_locator["path"] == str(path)
+    assert request.history_locator["native_id"] == session.native_id
+    assert request.history_locator["original_cwd"] == session.cwd

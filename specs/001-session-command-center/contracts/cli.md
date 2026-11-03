@@ -172,3 +172,12 @@ shared_usage видна отдельно, общий итог не склады�
 
 Cancel до source change не меняет данные. Cancel после source change оставляет durable
 recovery state. GUI/CLI используют одинаковые service results; UI не скрывает частичный успех.
+
+## Human error presentation amendment — 2026-11-03
+
+Human CLI/TUI render stable error/reason codes as explanations with recovery actions
+(refresh, original cwd, configured executable, close native session, retained backup,
+Hide, or Current terminal). Unknown codes have a safe generic explanation plus code.
+Manual resume guidance retains native ID, history location and original/requested cwd,
+with only the already verified help argv. Display translation does not alter serialized
+JSON envelopes, confirmation plans/tokens, journal payloads or machine-readable codes.

@@ -1,6 +1,18 @@
+import pytest
+
 from sessions_manager.models import SourceRoot
 from sessions_manager.sources.native_version import resolve_cleanup_version
 from tests.support.cleanup_case import version_cli
+
+
+@pytest.mark.parametrize(
+    "provider,version", [("grok", "1.0.70"), ("cursor", "2026.10.22-27dcf5f"), ("codex", "0.166.0")]
+)
+def test_supported_native_versions_are_detected_without_toml(tmp_path, provider, version):
+    root = SourceRoot.create(
+        provider, tmp_path / "native", executable_path=version_cli(tmp_path, version, provider)
+    )
+    assert resolve_cleanup_version(root) == version
 
 
 def test_detected_version_is_rechecked_after_executable_changes(tmp_path):

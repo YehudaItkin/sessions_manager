@@ -42,6 +42,7 @@ class Adapter:
                     "updated_at_ms",
                     "recency_at",
                     "recency_at_ms",
+                    "history_mode",
                 }
                 columns = allowed & actual
                 reader.tables["threads"] = columns
@@ -73,6 +74,7 @@ class Adapter:
                         **stamps,
                         "rollout": fingerprint(locator),
                     },
+                    extra={"history_mode": row.get("history_mode")},
                 )
                 self._capabilities(session, locator.is_file())
                 result.sessions.append(session)
@@ -101,10 +103,39 @@ class Adapter:
     def _capabilities(self, session, has_rollout):
         session.capabilities["metadata"] = Capability("supported")
         session.capabilities["cleanup"] = Capability("unavailable", "native_cascade_unbounded")
-        if has_rollout and resume_context_verified(self.root):
+        from .native_version import resolve_cleanup_version
+
+        paginated = (
+            session.extra.get("history_mode") == "paginated"
+            and resolve_cleanup_version(self.root) == "0.166.0"
+        )
+        persisted = has_rollout or (paginated and self._has_paginated_history(session.native_id))
+        if persisted and resume_context_verified(self.root):
             session.capabilities["resume"] = Capability("supported")
         else:
-            session.capabilities["resume"] = Capability("unavailable", "resume_binding_unverified")
+            session.capabilities["resume"] = Capability(
+                "unavailable",
+                "history_not_recorded"
+                if paginated and not persisted
+                else "resume_binding_unverified",
+            )
+
+    def _has_paginated_history(self, native_id):
+        if not hasattr(self, "_persisted_threads"):
+            import sqlite3
+
+            self._persisted_threads = set()
+            tables = {"thread_items": {"thread_id"}, "thread_realtime_items": {"thread_id"}}
+            try:
+                with NativeSQLite(self.root.path / "thread_history_1.sqlite", tables) as reader:
+                    for table in tables:
+                        self._persisted_threads.update(
+                            row["thread_id"] for row in reader.read(table, ["thread_id"])
+                        )
+            except (Failure, OSError, sqlite3.Error):
+                # An index row alone does not establish recoverable conversation context.
+                self._persisted_threads.clear()
+        return native_id in self._persisted_threads
 
     def read_history(self, session):
         import json

@@ -64,57 +64,94 @@ def graph(root_id, load, namespace):
         except (UnicodeError, AttributeError):
             raise Failure("cursor_wire_utf8", 4) from None
 
-    try:
-        root = node(root_id, 0)
-        if 8 not in root:
-            raise Failure("cursor_graph_unknown", 4)
-        for turn_ref in root[8]:
-            turn = node(text(turn_ref), 1)
-            agent = fields(turn[1][0])
-            if 1 in agent:
-                key = text(agent[1][0])
+    def reference(value):
+        # Native blob references are 32-byte hashes stored as hex SQLite keys.
+        # Older textual-key projections remain readable.
+        if isinstance(value, bytes) and len(value) == 32:
+            binary_key = value.hex()
+            if load(binary_key) is not None:
+                return binary_key
+            # Resolve textual legacy keys only when that exact blob exists.
+            legacy_key = text(value)
+            return legacy_key if load(legacy_key) is not None else binary_key
+        return text(value)
+
+    def append_event(key, role, body, *, completeness="complete"):
+        events.append(
+            HistoryEvent(
+                identity(namespace, key),
+                role,
+                len(events),
+                text=body,
+                native_id=key,
+                completeness=completeness,
+            )
+        )
+
+    def agent_turn(agent):
+        incomplete = False
+        if 1 in agent:
+            key = reference(agent[1][0])
+            try:
                 user = node(key, 2)
                 body = text(user.get(1, [b""])[0])
                 if not body and 18 in user:
-                    raw = load(text(user[18][0]))
+                    raw = load(reference(user[18][0]))
                     if raw is None:
                         raise Failure("cursor_graph_missing", 4)
                     body = text(raw)
-                events.append(
-                    HistoryEvent(
-                        identity(namespace, key), "user", len(events), text=body, native_id=key
-                    )
-                )
-            for step_ref in agent.get(2, []):
-                key = text(step_ref)
+                append_event(key, "user", body)
+            except (Failure, KeyError, IndexError):
+                incomplete = True
+        for step_ref in agent.get(2, []):
+            try:
+                key = reference(step_ref)
                 step = node(key, 2)
                 if 1 in step:
                     message = fields(step[1][0])
-                    events.append(
-                        HistoryEvent(
-                            identity(namespace, key),
-                            "assistant",
-                            len(events),
-                            text=text(message.get(1, [b""])[0]),
-                            native_id=key,
-                        )
-                    )
+                    append_event(key, "assistant", text(message.get(1, [b""])[0]))
                 elif 2 in step:
-                    events.append(
-                        HistoryEvent(
-                            identity(namespace, key),
-                            "tool_call",
-                            len(events),
-                            text=None,
-                            native_id=key,
-                            completeness="partial",
+                    append_event(key, "tool_call", None, completeness="partial")
+                    incomplete = True
+                elif 3 not in step:
+                    incomplete = True
+            except (Failure, KeyError, IndexError):
+                incomplete = True
+        return incomplete
+
+    try:
+        root = node(root_id, 0)
+        if 8 not in root or len(root[8]) > 100000:
+            raise Failure("cursor_graph_unknown", 4)
+        incomplete = False
+        for turn_ref in root[8]:
+            try:
+                turn = node(reference(turn_ref), 1)
+                if 1 in turn:
+                    incomplete = agent_turn(fields(turn[1][0])) or incomplete
+                elif 2 in turn:
+                    shell = fields(turn[2][0])
+                    key = reference(shell[1][0])
+                    command = node(key, 2)
+                    append_event(key, "tool_call", text(command.get(1, [b""])[0]))
+                    if 2 in shell:
+                        key = reference(shell[2][0])
+                        output = node(key, 2)
+                        append_event(
+                            key,
+                            "tool_result",
+                            "\n".join(
+                                text(output[number][0]) for number in (1, 2) if number in output
+                            ),
                         )
-                    )
-                elif 3 in step:
-                    continue
                 else:
-                    raise Failure("cursor_graph_unknown_step", 4)
-        state = "partial" if any(e.completeness != "complete" for e in events) else "complete"
-        return HistoryResult(events, state)
+                    incomplete = True
+            except (Failure, KeyError, IndexError):
+                incomplete = True
+        return HistoryResult(
+            events,
+            "partial" if incomplete else "complete",
+            "cursor_graph_incomplete" if incomplete else None,
+        )
     except (Failure, KeyError, IndexError):
         return HistoryResult(events, "partial", "cursor_graph_incomplete")

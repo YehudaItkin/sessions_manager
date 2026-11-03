@@ -7,7 +7,7 @@ from functools import lru_cache
 
 
 @lru_cache(maxsize=32)
-def _claude_version(path, device, inode, size, modified):
+def _native_version(provider, path, device, inode, size, modified):
     try:
         result = subprocess.run(
             [path, "--version"],
@@ -17,14 +17,20 @@ def _claude_version(path, device, inode, size, modified):
             timeout=2,
             check=False,
         )
-        match = re.fullmatch(r"([0-9]+\.[0-9]+\.[0-9]+) \(Claude Code\)\s*", result.stdout)
+        pattern = {
+            "claude": r"([0-9]+\.[0-9]+\.[0-9]+) \(Claude Code\)\s*",
+            "codex": r"codex-cli ([0-9]+\.[0-9]+\.[0-9]+)\s*",
+            "grok": r"grok ([0-9]+\.[0-9]+\.[0-9]+) \([A-Za-z0-9]+\) \[stable\]\s*",
+            "cursor": r"([0-9]{4}\.[0-9]{2}\.[0-9]{2}-[a-f0-9]+)\s*",
+        }[provider]
+        match = re.fullmatch(pattern, result.stdout)
         return match.group(1) if result.returncode == 0 and match else None
     except (OSError, UnicodeError, subprocess.TimeoutExpired):
         return None
 
 
 def resolve_cleanup_version(root):
-    if root.provider != "claude":
+    if root.provider not in {"claude", "codex", "grok", "cursor"}:
         return root.executable_version
     if root.executable_version is not None and not getattr(root, "_detected_version", False):
         return root.executable_version
@@ -42,8 +48,8 @@ def resolve_cleanup_version(root):
             or not os.access(executable, os.X_OK)
         ):
             return None
-        root.executable_version = _claude_version(
-            str(executable), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+        root.executable_version = _native_version(
+            root.provider, str(executable), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
         )
     except OSError:
         pass

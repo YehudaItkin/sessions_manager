@@ -85,9 +85,12 @@ JSON — один объект со `schema_version=1`, `data`, `sources`, `comp
 | Codex 0.166 paginated / известный JSONL | `state_5`, обычные/realtime items проекции и rollout; response receipts и отдельные legacy snapshots | По ID в проверенном контексте; cleanup отключён (`native_cascade_unbounded`) |
 | Claude Code 2.1.299; совместимые JSONL 2.1.x до 2.1.299 | Сообщения, ветви, tool events; последний корректный usage по `message.id` | По ID; cleanup для 2.1.299 только transcript и известных companions, включая завершённые workflows |
 | Grok Build 1.0.70 | `summary.json`, ACP updates или известный raw chat fallback, `usage.json` | По ID; только доказанный локальный bundle, без remote delete |
-| Cursor CLI 2026.10.22-27dcf5f | schemaVersion 1, ограниченная protobuf-проекция достижимого графа | По ID; только проверенный целый per-chat bundle |
+| Cursor CLI 2026.10.22-27dcf5f | SQLite metadata; optional schemaVersion 1 sidecar; достижимый protobuf-граф с binary hash references | По ID; только проверенный целый per-chat bundle |
 
-Неизвестные узлы/форматы дают partial/unavailable. Lifetime tokens Cursor остаются `null`.
+Cursor без meta.json использует собственную SQLite metadata и cwd соседней сессии только
+при совпадении native workspace hash; неизвестный cwd не угадывается. Неизвестные узлы
+дают partial, последующие читаемые сообщения сохраняются. Shell-блоки только отображаются.
+Lifetime tokens Cursor остаются `null`.
 Недоказанное заполнение контекстного окна не считается расходом. Перекрывающиеся Grok
 snapshots разных сессий не суммируются без доказательства независимости.
 Сбросы legacy Codex counters и неизвестное перекрытие с receipts обозначаются как partial.
@@ -128,13 +131,18 @@ Namespace различает профили одного инструмента.
 context; произвольные Grok/Cursor homes остаются view-only даже при `resume_context="native"`.
 Для Claude версия определяется ограниченным вызовом `claude --version`, если не задана
 явно. Поддержана версия CLI 2.1.299 и совместимые записи JSONL 2.1.x до 2.1.299; каждая
-запись проверяется по identity и форме сообщения. Для Grok/Cursor executable_version
-по-прежнему задаётся явно. Неизвестная версия или структура не включает удаление.
+запись проверяется по identity и форме сообщения. Для Grok/Cursor версия также определяется через безопасный `--version` без ручного TOML.
+Неизвестная версия или структура не включает удаление. Общий индекс/legacy DB Grok
+по-прежнему блокирует корзину: менеджер не оставляет там неучтённые копии истории.
 При смене executable версия проверяется заново; restore проверяет её и в новом процессе.
 
 При пропавшем проекте доступны выбор существующей папки, отмена и ручная инструкция.
-Автоматический resume в перенесённом cwd пока недоступен для всех профилей до отдельной
-native-проверки привязки. История не переносится и не заменяется новым разговором.
+Для Codex 0.166.0 с `history_mode=paginated` продолжение по ID работает без rollout
+и допускает новый cwd при наличии записанной проекции истории: это проверено настоящим
+CLI на изолированной искусственной истории. Один заголовок без history не считается
+доказательством продолжения.
+Остальные relocated-cwd профили пока дают ручную инструкцию. История не переносится
+и не заменяется новым разговором.
 Warp delivery означает передачу запроса, а не подтверждение загрузки разговора.
 
 ## Корзина и восстановление
@@ -187,6 +195,9 @@ uv build
 Performance требует явного `--corpus`; настоящий Warp — `--run-warp`.
 Synthetic demo, 10 000 сессий, fault recovery и ручные native-проверки:
 [quickstart](specs/001-session-command-center/quickstart.md).
-Реальный native resume и Warp runtime ещё требуют ручной проверки владельцем.
+Native Codex 0.166 проверен на отдельном offline CODEX_HOME, включая перенос проекта.
+Warp runtime проверен, но не прошёл: запрос остался невостребованным в установленной
+Warp 0.2026.10.21. До устранения используйте Current terminal. Реальные resume других
+профилей и запуск через Warp остаются открытыми gates.
 Решения и scope: [spec](specs/001-session-command-center/spec.md),
 [plan](specs/001-session-command-center/plan.md), [tasks](specs/001-session-command-center/tasks.md).
