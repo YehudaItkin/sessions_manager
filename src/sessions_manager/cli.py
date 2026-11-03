@@ -14,6 +14,7 @@ from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
 from . import __version__
+from .messages import explain, human_data, resume_guide
 from .models import Failure, envelope
 
 
@@ -175,10 +176,15 @@ def emit(options, result):
             console.print(
                 f"History location: {safe_text(row['locator'])}\nModel: {safe_text(row['model'])}"
             )
-            console.print("Capabilities: " + safe_text(json.dumps(row["capabilities"])))
+            console.print("Capabilities:")
+            for name, capability in row["capabilities"].items():
+                console.print(
+                    f"{name}: {capability['state']}"
+                    + (" — " + explain(capability["reason"]) if capability.get("reason") else "")
+                )
             for name, metric in data["usage"]["metrics"].items():
                 console.print(
-                    f"{name}: {metric['value'] if metric['value'] is not None else 'unknown'} ({metric.get('reason') or 'complete'})"
+                    f"{name}: {metric['value'] if metric['value'] is not None else 'unknown'} ({explain(metric['reason']) if metric.get('reason') else 'complete'})"
                 )
             for event in data["events"]:
                 console.print(f"\n{event['role']}: {safe_text(event.get('text') or '[no text]')}")
@@ -192,17 +198,19 @@ def emit(options, result):
                     name,
                     str(metric["value"]) if metric["value"] is not None else "unknown",
                     f"{metric['known_sessions']} / {metric['selected_sessions']}",
-                    metric.get("reason") or "complete",
+                    explain(metric["reason"]) if metric.get("reason") else "complete",
                 )
             console.print(table)
             for group in data["groups"]:
                 console.print(
                     safe_text(group["key"]) + ": " + str(group["metrics"]["total_tokens"]["value"])
                 )
-        else:
-            console.print(safe_text(json.dumps(data, ensure_ascii=False, indent=2)))
+        elif result["kind"] == "error" and data.get("manual_resume_guide"):
+            console.print(resume_guide(data["manual_resume_guide"]))
+        elif result["kind"] != "error" or data:
+            console.print(safe_text(json.dumps(human_data(data), ensure_ascii=False, indent=2)))
         if result.get("error"):
-            console.print(result["error"]["code"])
+            console.print(explain(result["error"]["code"]))
 
 
 def main():
@@ -214,12 +222,12 @@ def main():
         if "--format" in sys.argv and sys.argv[sys.argv.index("--format") + 1 :][:1] == ["json"]:
             typer.echo(json.dumps(failure.envelope(), ensure_ascii=False))
         else:
-            typer.echo(failure.code, err=True)
+            typer.echo(explain(failure.code), err=True)
         raise SystemExit(failure.exit_code) from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     except OSError:
-        typer.echo("io_error", err=True)
+        typer.echo(explain("io_error"), err=True)
         raise SystemExit(6) from None
 
 

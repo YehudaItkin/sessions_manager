@@ -2,6 +2,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from ..discovery import refresh
+from ..messages import explain, human_data
 from ..models import safe_text
 from .screens import TextScreen
 
@@ -163,7 +164,7 @@ class SessionsApp(App):
         try:
             QuerySpec(scope=scope, **value).filter([])
         except Failure as failure:
-            self.push_screen(TextScreen(failure.code))
+            self.push_screen(TextScreen(explain(failure.code)))
             return
         self.scope, self.filters = scope, value
         self.reload_rows()
@@ -222,13 +223,13 @@ class SessionsApp(App):
                     result = launch_current(request)
                 refresh(self.config, self.catalog, providers=[root.provider])
             self.reload_rows()
-            self.notify(result["state"])
+            self.notify(result.get("message") or result["state"])
         except Failure as failure:
             guide = failure.data.get("manual_resume_guide")
             if guide:
                 self.push_screen(ResumeScreen(cwd, guide), self._resume_choice)
             else:
-                self.push_screen(TextScreen(failure.code))
+                self.push_screen(TextScreen(explain(failure.code)))
 
     def selected_ids(self):
         return (
@@ -272,7 +273,7 @@ class SessionsApp(App):
         try:
             plan = service.preview(action, ids)
         except Failure as failure:
-            self.push_screen(TextScreen(failure.code))
+            self.push_screen(TextScreen(explain(failure.code)))
             return
 
         def confirmed(closed):
@@ -284,9 +285,11 @@ class SessionsApp(App):
                 )
                 self.batch_selection.clear()
                 self.reload_rows()
-                self.push_screen(TextScreen(json.dumps(result, ensure_ascii=False, indent=2)))
+                self.push_screen(
+                    TextScreen(json.dumps(human_data(result), ensure_ascii=False, indent=2))
+                )
             except Failure as failure:
-                self.push_screen(TextScreen(failure.code))
+                self.push_screen(TextScreen(explain(failure.code)))
 
         self.push_screen(CleanupScreen(plan, confirmed))
 

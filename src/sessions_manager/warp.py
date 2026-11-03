@@ -172,6 +172,7 @@ def deliver(catalog, request, *, config_dir=None, opener=subprocess.run):
     return {
         "launch_id": request.launch_id,
         "state": "delivered",
+        "message": "Request sent to Warp; session loading is not confirmed. If no CLI opens, choose Current terminal. The request expires after two minutes.",
         "expires_at": request.expires_at,
         "conversation_loaded": None,
     }

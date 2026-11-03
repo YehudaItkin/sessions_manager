@@ -28,8 +28,11 @@ Process cwd задаётся явно для всех четырёх. Для Cur
 Нестандартный history root не считается автоматически native resumable context.
 В первой версии произвольные explicit Grok/Cursor roots остаются view-only; Codex/Claude
 могут использовать только проверенный allowlisted native-home override.
-Автоматическое продолжение в другом cwd пока отклоняется для всех четырёх профилей,
-до отдельного native gate; исходный history locator остаётся неизменным.
+Автоматическое продолжение в другом cwd проверено для Codex 0.166.0
+history_mode=paginated: cold native CLI загрузил прежний ID и искусственную историю
+после исчезновения исходной папки, без fork/new session. Rollout для этого профиля
+не обязателен. Другие профили отклоняют новый cwd до своего gate; исходный history
+locator остаётся неизменным.
 Выбор пропавшего cwd: существующий альтернативный каталог либо отмена; нельзя mkdir или
 молча взять cwd менеджера. Утрата native session не приводит к замене новой.
 
@@ -98,6 +101,8 @@ Root-independent --data-dir из config ведёт к тому же private regi
 - exec_failed / child_exited / expired / delivery_failed — явные результаты.
 
 Delivered/claimed/handoff_attempted не равны подтверждённой conversation_loaded.
+Ответ delivered включает human message: при отсутствии CLI выбрать Current terminal;
+TUI показывает это сообщение вместо одного технического статуса.
 При таймауте показывается pending/expired и возможность явного повтора;
 таймаут не запускает второй CLI автоматически.
 
@@ -121,3 +126,18 @@ Delivered/claimed/handoff_attempted не равны подтверждённой
 Источники транспорта: [Warp Tab Config](https://docs.warp.dev/terminal/windows/tab-configs/),
 [Warp URI](https://docs.warp.dev/terminal/more-features/uri-scheme),
 [Textual suspend](https://textual.textualize.io/api/app/#textual.app.App.suspend).
+
+## Native gate update — 2026-11-03
+
+`tests.support.verify_native_codex --executable /absolute/codex` создаёт новый private
+CODEX_HOME с offline provider на закрытом loopback port 9. HOME не подменяется, credentials
+не копируются. Native app-server создаёт две искусственные сессии и историю, проверяет
+restart, archive/unarchive и соседа; затем PTY запускает настоящий
+`codex --no-daemon resume ID -C moved --no-alt-screen` после rename исходной папки.
+Проверяются записанный marker в UI, прежний ID/cwd в native DB, отсутствие новой сессии.
+Эти flags изолируют только тест; production argv остаётся обычным exact resume.
+
+Harmless Warp runtime был запущен на установленной 0.2026.10.21.08.25.02: URI принят,
+но ticket остался requested и fixture child не стартовал за 20 секунд. Gate FAIL,
+conversation_loaded не заявляется. Computer Use запретил доступ к Warp; обход UI запрета
+не применялся. Native startup state не установлен. Current terminal — рабочая альтернатива.

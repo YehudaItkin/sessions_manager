@@ -407,3 +407,19 @@ Cursor. Сессии теряются, накапливается мусор. Н
   Delete/Move to trash означает восстановимый перенос; Purge — отдельное окончательное удаление.
 - Grok usage.json.session содержит totals; отсутствие файла остаётся not_recorded.
   Cwd проекта и расположение native history показываются раздельно без переугадывания пути.
+
+### Уточнения native совместимости — 2026-11-03
+
+- Отсутствие optional Cursor meta.json не скрывает session SQLite metadata. Cwd берётся
+  из проверенного соседнего workspace context либо остаётся unknown. Binary hash refs
+  и shell turns читаются; неизвестный блок не скрывает последующую доступную историю.
+- Grok/Cursor поддержанные executable versions определяются без ручного TOML; shared
+  indices, неизвестная topology и activity guards по-прежнему блокируют небезопасную уборку.
+- Codex 0.166.0 paginated resume использует native ID и CODEX_HOME без обязательного
+  rollout и допускает новый существующий cwd. Прежний locator и ID сохраняются. Native
+  gate выполнен только на изолированных искусственных сессиях с offline provider.
+- Human CLI/TUI показывают объяснение причины и дальнейшее действие; JSON reason/error
+  codes сохраняют совместимость. Unknown metrics не превращаются в вымышленные значения.
+- Warp delivery не подтверждает запуск. После фактического failed runtime gate
+  пользователю указывается Current terminal; native Codex cascade cleanup остаётся
+  unavailable до доказанной точной границы операции и восстановления.

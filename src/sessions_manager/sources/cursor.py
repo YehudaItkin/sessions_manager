@@ -1,4 +1,6 @@
+import hashlib
 import json
+from pathlib import Path
 
 from ..models import Capability, Failure, Session, timestamp
 from .base import ScanResult, directory_inventory, json_file, read_many, resume_context_verified
@@ -11,12 +13,31 @@ class Adapter:
     def __init__(self, root):
         self.root = root
         self._history = {}
+        self._workspace_cwds = {}
 
     def discover(self):
         result = ScanResult(profile=self.profile)
         if not self.root.path.exists():
             return result
         home = self.root.path / "chats" if (self.root.path / "chats").is_dir() else self.root.path
+        candidates = {}
+        for sidecar in home.glob("*/*/meta.json"):
+            try:
+                meta = json_file(sidecar)
+                cwd = meta.get("cwd")
+                workspace = sidecar.parent.parent.name
+                if (
+                    meta.get("schemaVersion") == 1
+                    and isinstance(cwd, str)
+                    and Path(cwd).is_absolute()
+                    and hashlib.md5(cwd.encode()).hexdigest() == workspace
+                ):
+                    candidates.setdefault(workspace, set()).add(cwd)
+            except (Failure, OSError, ValueError):
+                continue
+        self._workspace_cwds = {
+            key: next(iter(values)) for key, values in candidates.items() if len(values) == 1
+        }
         for session in read_many(self._discover_one, sorted(home.glob("*/*/store.db"))):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"
@@ -26,8 +47,9 @@ class Adapter:
 
     def _discover_one(self, store):
         try:
-            meta = json_file(store.parent / "meta.json")
-            if meta.get("schemaVersion") != 1:
+            sidecar = store.parent / "meta.json"
+            meta = json_file(sidecar) if sidecar.exists() else {}
+            if sidecar.exists() and meta.get("schemaVersion") != 1:
                 raise Failure("unsupported_native_schema", 3)
             with NativeSQLite(store, {"meta": {"key", "value"}, "blobs": {"id", "data"}}) as reader:
                 rows = reader.read("meta", ["value"], key="key", value="0")
@@ -55,7 +77,7 @@ class Adapter:
                 self.root,
                 native,
                 store.parent,
-                cwd=meta.get("cwd"),
+                cwd=meta.get("cwd") or self._workspace_cwds.get(store.parent.parent.name),
                 title=native_meta.get("name"),
                 model=native_meta.get("lastUsedModel"),
                 created_at=timestamp(meta.get("createdAtMs") or native_meta.get("createdAt")),
@@ -63,14 +85,22 @@ class Adapter:
                 profile=self.profile,
                 fingerprint=inventory,
                 known_bytes=known_bytes,
-                extra={"latest_root": native_meta.get("latestRootBlobId")},
+                extra={
+                    "latest_root": native_meta.get("latestRootBlobId"),
+                    "workspace_id": store.parent.parent.name,
+                    "cwd_provenance": "sidecar"
+                    if meta.get("cwd")
+                    else "workspace_neighbor"
+                    if store.parent.parent.name in self._workspace_cwds
+                    else "not_recorded",
+                },
             )
             session.capabilities["metadata"] = Capability("supported")
             session.capabilities["usage"] = Capability("unavailable", "not_recorded")
             if resume_context_verified(self.root):
                 session.capabilities["resume"] = Capability("supported")
             return session
-        except (Failure, OSError, ValueError, UnicodeError):
+        except (Failure, OSError, ValueError, TypeError, KeyError, AttributeError):
             return None
 
     def read_history(self, session):

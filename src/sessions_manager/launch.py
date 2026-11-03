@@ -56,8 +56,16 @@ def build_request(root, session, data_dir, *, cwd=None, target="current"):
         unavailable("resume_binding_unverified")
     if not chosen.is_dir():
         unavailable("resume_cwd_unavailable")
-    # No relocated-workspace profile has passed the owner native runtime gate.
-    if not session.cwd or chosen.resolve() != Path(session.cwd).resolve():
+    from .sources.native_version import resolve_cleanup_version
+
+    relocated_supported = (
+        root.provider == "codex"
+        and session.extra.get("history_mode") == "paginated"
+        and resolve_cleanup_version(root) == "0.166.0"
+    )
+    if (
+        not session.cwd or chosen.resolve() != Path(session.cwd).resolve()
+    ) and not relocated_supported:
         unavailable("resume_cwd_unsupported")
     executable = root.executable_path
     if (

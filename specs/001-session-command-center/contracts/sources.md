@@ -31,8 +31,8 @@ native argv действуют только при подтверждённой 
 Полный обход home/диска, browser/desktop/ACP stores и private credentials исключены.
 Нестандартное расположение остаётся view-only, пока связь с native resume не доказана.
 В v1 произвольные explicit Grok/Cursor homes не имеют доказанного home override и
-остаются view-only даже при resume_context=native. Все relocated-cwd bindings пока
-отклоняются с ManualResumeGuide, до отдельного native gate.
+остаются view-only даже при resume_context=native. Relocated-cwd bindings отклоняются
+с ManualResumeGuide, кроме проверенного Codex 0.166.0 history_mode=paginated.
 
 ## SQLite reading
 
@@ -58,7 +58,7 @@ Tool outputs в виде text-block arrays нормализуются в тек�
 пропускаются с partial и без копирования opaque/image payload.
 
 Metadata: state_5.sqlite threads; identity=id; cwd/title/preview/name/model;
-created/updated/recency timestamps с предпочтением *_ms перед seconds.
+created/updated/recency timestamps с предпочтением *_ms перед seconds; optional history_mode.
 History: thread_history_1.sqlite tables:
 
 | Таблица | Ключевые поля |
@@ -92,6 +92,11 @@ breakdown, не прибавкой к total. Legacy token_count snapshots — о
 
 Resume argv: absolute_codex, resume, native_id, -C, cwd; проверенный CODEX_HOME context.
 Нет --last, model override, fork или permission bypass.
+Для установленного 0.166.0 history_mode=paginated отдельный rollout не обязателен,
+но без него требуется сохранённый thread item в проверенной проекции. Один заголовок
+без history items не даёт resume capability (history_not_recorded).
+Этот профиль допускает новый существующий cwd при неизменных native ID/CODEX_HOME
+и исходном history_locator; cold native resume проверен на offline искусственном store.
 Если доступен только stale index без доказанно возобновляемого контекста, resume unavailable.
 
 Mutation для этого paginated-профиля unavailable с reason=native_cascade_unbounded.
@@ -201,3 +206,15 @@ missing ID/cwd/time/usage, alias/collision, changed-during-read, non-ASCII/contr
   secret-property exclusion, optional unknown fields, context-only metrics и WAL.
 
 Fixtures создаются вручную/генератором из схем; копии реальных историй не используются.
+
+## Cursor compatibility amendment — 2026-11-03
+
+meta.json optional. Native SQLite meta identity=agentId должна совпадать с именем chat dir.
+При отсутствии sidecar cwd восстанавливается только по единственному известному cwd
+соседней сессии того же workspace, где MD5(cwd UTF-8) совпадает с именем workspace.
+Без такого доказательства cwd остаётся unknown. Hash не обращается и пути не перебираются.
+Binary references — 32-byte hashes с hex SQLite keys; legacy textual refs поддержаны.
+ConversationTurnStructure agent.v1 различает agent field 1 и shell field 2;
+shell command/stdout/stderr только отображаются. Unknown/missing node даёт partial,
+но не прекращает чтение следующих turns/steps и не скрывает session metadata.
+Opaque encrypted/model/key fields и reasoning не копируются.

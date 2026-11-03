@@ -1063,3 +1063,18 @@ documentation gates T099–T102 обязательны для всей feature.
 - [X] T106 Replace case-sensitive refresh/resume shortcuts with F5 refresh, o open/resume and r restore within trash in `src/sessions_manager/ui/app.py` and `src/sessions_manager/ui/screens.py`; cover actual keyboard actions.
 - [X] T107 Investigate Grok missing token metrics and project/history locations; preserve explicit not-recorded values when no native ledger exists. Update regression fixtures if a supported format was missed.
 - [X] T108 Run relevant/full checks and read-only native verification; update README/contracts/validation and submit fixes through GitHub. Do not test deletion on personal sessions.
+
+## Native compatibility and remaining capabilities (2026-11-03)
+
+- [X] T109 Reproduce missing Cursor metadata sidecars and binary graph references with synthetic fixtures; recover metadata from verified sibling workspace context without guessing paths.
+- [X] T110 Normalize supported Cursor graph variants and keep unknown nodes explicit; preserve metadata when optional graph data is incomplete.
+- [X] T111 Detect supported Grok/Cursor runtime versions automatically for cleanup, retaining source topology/activity/closed-session validation and safe restore across process restarts.
+- [X] T112 Verify native resume argument binding with installed CLI metadata and isolated disposable native stores; improve Codex missing-rollout/relocated-path capability reasons where proof permits.
+- [ ] T113 Run the authorized harmless Warp runtime gate; repair transport if necessary without opening personal AI conversations. **Attempted, FAIL:** installed Warp accepted URI but never claimed the ticket; Computer Use denied access to Warp. Cause in native startup remains unverified. Current terminal guidance is implemented; gate remains open.
+- [X] T114 Investigate Codex native cleanup/archival APIs and implement only a bounded reversible profile with verified recovery and neighbor protection; record any native limitation explicitly.
+- [X] T115 Replace raw technical failure codes in human CLI/TUI with actionable explanations while preserving stable JSON codes.
+- [X] T116 Update spec/contracts/research and validation, run relevant/full/package/performance gates, and publish reviewed changes through GitHub.
+
+Remaining native capabilities (not silently marked implemented):
+- [ ] T117 Design/verify scoped local Grok shared-index cleanup and restore; current native local directories plus session_search.sqlite/grok.db are intentionally unavailable for trash. Remote delete and direct shared DB mutation remain excluded.
+- [ ] T118 Enable Codex cleanup only after a native API can bind exact confirmed descendant closure/revision and recovery. Current threadId-only cascade API does not satisfy this gate.

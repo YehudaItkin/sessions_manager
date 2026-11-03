@@ -18,6 +18,7 @@ def test_delivered_is_not_claimed_and_config_retained(tmp_path, fake_executable)
     with Catalog(tmp_path / "data") as catalog:
         result = deliver(catalog, request, config_dir=tmp_path / "warp", opener=opener)
         assert result["state"] == "delivered"
+        assert "Current terminal" in result["message"]
         assert calls[0][0] == "/usr/bin/open"
         assert calls[0][1].startswith("warp://tab_config/sessions_manager_")
         assert list((tmp_path / "warp").glob("*.toml"))

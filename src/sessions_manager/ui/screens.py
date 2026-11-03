@@ -3,6 +3,7 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from ..messages import explain, human_data, resume_guide
 from ..models import safe_text
 
 
@@ -31,16 +32,12 @@ class ResumeScreen(ModalScreen):
         self.guide = guide
 
     def compose(self):
-        import json
-
         from textual.widgets import Input
 
         with VerticalScroll():
             yield Static("Resume exact native session", markup=False)
             if self.guide:
-                yield Static(
-                    safe_text(json.dumps(self.guide, ensure_ascii=False, indent=2)), markup=False
-                )
+                yield Static(safe_text(resume_guide(self.guide)), markup=False)
             yield Input(value=self.cwd, placeholder="Existing project directory", id="cwd")
             yield Button("Current terminal", id="current")
             yield Button("Warp", id="warp")
@@ -84,7 +81,8 @@ class CleanupScreen(ModalScreen):
                 markup=False,
             )
             yield Static(
-                safe_text(json.dumps(self.plan, ensure_ascii=False, indent=2)), markup=False
+                safe_text(json.dumps(human_data(self.plan), ensure_ascii=False, indent=2)),
+                markup=False,
             )
             if self.plan.get("requires_assert_closed"):
                 yield Checkbox(
@@ -203,14 +201,14 @@ class DetailsScreen(ModalScreen):
         rows = self.catalog.events(self.uid, self.history_offset, 101)
         header = f"Manager ID: {session.display_id}\nNative ID: {session.native_id or 'unknown'}\nSource: {session.provider}\nProject: {session.cwd or 'unknown'}\nCreated: {display_time(session.created_at)}\nLast activity: {display_time(session.last_activity_at)}\nHistory: {session.history_state}\n"
         header += "\n".join(
-            f"{key}: {value.state}" + (f" ({value.reason})" if value.reason else "")
+            f"{key}: {value.state}" + (f" — {explain(value.reason)}" if value.reason else "")
             for key, value in session.capabilities.items()
         )
         from ..statistics import summarize
 
         header += f"\nHistory location: {session.locator}\nModel: {session.model or 'unknown'}\n"
         for name, metric in summarize(self.catalog, [session])["metrics"].items():
-            header += f"{name}: {metric['value'] if metric['value'] is not None else 'unknown'} ({metric.get('reason') or 'complete'})\n"
+            header += f"{name}: {metric['value'] if metric['value'] is not None else 'unknown'} ({explain(metric['reason']) if metric.get('reason') else 'complete'})\n"
         text = (
             header
             + f"\n\nEvents {self.history_offset + 1}–{self.history_offset + len(rows[:100])}\n"

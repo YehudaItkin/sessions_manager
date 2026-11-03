@@ -19,7 +19,10 @@ Claude: поддержанный runtime 2.1.299 определяется чер
 доверенного executable при отсутствии явного executable_version. Кеш привязан к stat
 executable; replacement вызывает повторную проверку. Совместимые JSONL 2.1.x до 2.1.299
 проверяются по session ID/uuid/message role/content, а не двум точным patch-версиям.
-Grok/Cursor требуют явные 1.0.70/2026.10.22-27dcf5f и проверенную native структуру.
+Grok/Cursor поддерживают автоматический bounded --version probe той же доверенной
+границы для 1.0.70/2026.10.22-27dcf5f; проверенная native структура по-прежнему обязательна.
+Наличие grok.db/общего session_search.sqlite не разрешает file-only trash: индекс
+содержит отдельную копию истории, а scoped native cleanup/restore не доказаны.
 Известный per-session workflows/ включается только при согласованном runId/filename,
 терминальном status и обычных .json/.js файлах; orphan scripts, symlinks и неизвестная
 структура отклоняются. Внешний scriptPath не обходится и не удаляется; JS не исполняется.

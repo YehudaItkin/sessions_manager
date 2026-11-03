@@ -7,14 +7,20 @@ from sessions_manager.models import SourceRoot
 from tests.support import claude_factory, codex_factory, cursor_factory, grok_factory
 
 
-def version_cli(tmp_path, version="2.1.299"):
+def version_cli(tmp_path, version="2.1.299", provider="claude"):
     import sys
 
-    path = tmp_path / "fake-claude"
+    path = tmp_path / ("fake-" + provider)
+    output = {
+        "claude": version + " (Claude Code)",
+        "grok": "grok " + version + " (synthetic) [stable]",
+        "cursor": version,
+        "codex": "codex-cli " + version,
+    }[provider]
     path.write_text(
         f"#!{sys.executable}\nimport sys\n"
         "if sys.argv[1:] != ['--version']: raise SystemExit(99)\n"
-        f"print({(version + ' (Claude Code)')!r})\n"
+        f"print({output!r})\n"
     )
     path.chmod(0o700)
     return path

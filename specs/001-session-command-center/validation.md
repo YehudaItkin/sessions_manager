@@ -241,3 +241,76 @@ intentionally unavailable; custom Grok/Cursor homes remain view-only; Cursor lif
 counters without a proved mapping remain unknown. See quickstart and source/launch contracts.
 
 `.specify/extensions.yml` is absent: no after_implement hooks are registered.
+
+## Native compatibility follow-up — 2026-11-03 (T109–T116)
+
+This section supersedes earlier pending/NOT RUN statements only for the gates explicitly
+listed here. No personal native conversation was resumed, trashed, archived or deleted.
+
+- `uv run pytest -q`: **176 passed, 4 skipped**, 16.00 s. Skips are three opt-in corpus
+  tests and the opt-in actual Warp runtime test, which was run separately as recorded below.
+- `uv run ruff check src tests`, `uv run ruff format --check src tests`, `git diff --check`:
+  PASS, 96 Python files formatted. No new package dependency.
+- Same SC-002 seed-1 mixed 10,000-session / 1,054,646,020-byte corpus: **3 passed**,
+  cold discovery **8.494 s** (<=10), warm search/navigation **0.833 s** and first meaningful
+  PTY TUI frame **1.479 s** (<=2). macOS 27.0.1 / M3 Pro / 18 GiB; OS cache not flushed.
+  Corpus generation excluded; targets unchanged; no unrelated verification workload ran
+  concurrently with this measurement.
+- `uv build`: PASS. Fresh Python **3.12.12 / SQLite 3.53.4** venv outside checkout, locked
+  runtime dependencies, installed wheel: help/version/refresh/list/show/stats/dry-run
+  resume/cleanup preview/hide/unhide PASS. **40 sessions, 70 messages, 200 known tokens**;
+  all native synthetic file SHA-256 unchanged. Wheel SHA-256:
+  `fd9f125100f3e9dff53f0769a8ee5004cac094052f0941d01fbfeb33b1079ab3`.
+- `uv run python -m tests.support.verify_native_codex --executable /absolute/codex`:
+  **PASS** for installed 0.166.0, using a new private offline native home. Real app-server
+  restart retained synthetic context; archive/unarchive retained selected ID and unrelated
+  neighbor. Actual cold CLI PTY resume after original project rename loaded the recorded
+  context, persisted the same ID with new cwd and created **zero new sessions**. Receipt
+  booleans all true. HOME unchanged; no production credentials copied; only closed-loopback
+  synthetic provider used. This gate does not certify Codex cleanup/cascade boundaries.
+- Grok/Cursor detected-version synthetic trash/restore roundtrip: PASS after catalog close
+  and a fresh service; selected bytes restored exactly, neighbor bytes unchanged. Open
+  handles, unknown dependencies, unsupported versions and source drift remain guarded.
+- Read-only native scan: metadata complete for **199 Codex, 26 Claude, 117 Grok, 5 Cursor**.
+  Cursor recovered all three chats lacking sidecars; cwd known for five, history one complete
+  / four partial, cleanup eligible for five. Codex metadata-only stale entries remain visible:
+  final resume capability **182 supported / 17 history_not_recorded**. Claude cleanup eligible
+  for 26. Grok cleanup remains **117 shared_dependency_unverified**. Counts are a snapshot,
+  not fixed fixtures; private IDs, contents and paths were not copied to this repository.
+
+TDD evidence observed before fixes:
+
+| Expected RED | GREEN behavior |
+| --- | --- |
+| Three missing-sidecar/binary-hash Cursor regressions failed | Native metadata and verified neighbor cwd retained; binary hashes resolve |
+| Unknown first turn hid later history; shell turn was partial | Later messages retained; shell command/output displayed without execution |
+| 32-character legacy text key became a false binary reference | Exact existing legacy blob remains readable |
+| Three automatic provider-version cases returned None | Strict bounded version-only Grok/Cursor/Codex detection passes |
+| Paginated Codex without rollout unavailable | Known 0.166 + persisted thread items enables exact resume |
+| Metadata-only paginated row falsely resumable | history_not_recorded without a child launch |
+| Relocated Codex request rejected | Verified paginated profile retains original locator/ID and new cwd |
+| Missing human explanations and CLI showed raw code | Human recovery text; JSON codes/payloads unchanged |
+| Warp delivered response lacked actionable fallback | Explicit Current terminal guidance, with no loaded claim |
+
+Actual Warp gate: `uv run pytest tests/acceptance/test_warp_runtime.py --run-warp -q`
+**FAIL**, on installed **0.2026.10.21.08.25.02**. URI delivery succeeded but ticket stayed
+requested; harmless fixture child did not ack within 20 seconds. Launcher import from /
+passed and TOML matches current documentation. Native startup cause remains unverified.
+Computer Use returned “not allowed ... for safety reasons” for Warp; no alternate UI
+control was attempted. Expired manager-owned launch artifacts were cleaned using normal
+expiry handling. **T113 remains open**, with Current terminal as the documented alternative.
+
+Native limits explicitly retained: **T117** covers safe Grok shared-index/legacy DB scope
+and recovery; **T118** requires bounded Codex native cascade/revision support. Existing
+threadId-only archive/delete APIs do not provide a confirmed descendant set or conditional
+revision. A successful isolated archive roundtrip does not waive that requirement. No
+file-only ghost deletion, shared DB DML, remote Grok deletion or whole-DB rollback was added.
+Missing native token/history data remains unknown, with a human explanation.
+
+Maintainer self-review: constitutional traceability/TDD, source identity/cwd preservation,
+read-only native boundaries, trusted executable checks, cleanup guards, JSON compatibility,
+privacy and documentation checked. The changed-file review found no credentials, personal
+native IDs/transcripts/paths, production catalogs or generated corpora. Sole-maintainer
+self-review is recorded; requested publication is via branch/PR into main, with no bypass
+of hosted required checks. Warp's failing opt-in gate is explicitly excluded from passing
+acceptance and remains tracked, rather than being relabeled as a successful launch.
