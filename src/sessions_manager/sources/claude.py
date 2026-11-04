@@ -43,12 +43,24 @@ class Adapter:
             title = next(
                 (r.get("title") for r in reversed(rows) if r.get("type") == "ai-title"), None
             )
+            model = next(
+                (
+                    r["message"]["model"]
+                    for r in reversed(records)
+                    if r["type"] == "assistant"
+                    and isinstance(r.get("message"), dict)
+                    and isinstance(r["message"].get("model"), str)
+                    and r["message"]["model"]
+                ),
+                None,
+            )
             session = Session.build(
                 self.root,
                 native,
                 path,
                 cwd=cwd,
                 title=title,
+                model=model,
                 preview=first[:500] if isinstance(first, str) else None,
                 created_at=min(dates) if dates else None,
                 last_activity_at=max(dates) if dates else None,

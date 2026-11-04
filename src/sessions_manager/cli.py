@@ -317,23 +317,52 @@ def list_command(
     source: Annotated[list[str] | None, typer.Option("--source")] = None,
     project: str | None = None,
     scope: str = "visible",
-    sort: str = "recent",
+    sort: Annotated[
+        str,
+        typer.Option(
+            help="Sort by updated, created, source, project, title, id, manager-id, model, activity or size; recent/oldest are aliases."
+        ),
+    ] = "recent",
+    order: Annotated[
+        str | None,
+        typer.Option(help="asc or desc; defaults to descending dates/size and ascending text."),
+    ] = None,
+    model: Annotated[str | None, typer.Option(help="Model name contains, ignoring case.")] = None,
+    activity: Annotated[
+        str | None, typer.Option(help="active, inactive or unknown; omission includes all states.")
+    ] = None,
     query: str | None = None,
     since: str | None = None,
     until: str | None = None,
     limit: Annotated[int, typer.Option(min=1)] = 50,
     offset: Annotated[int, typer.Option(min=0)] = 0,
 ):
-    from .search import QuerySpec
+    from .search import SORT_OPTIONS, QuerySpec
 
-    if scope not in ("visible", "hidden", "all") or sort not in ("recent", "oldest"):
+    if scope not in ("visible", "hidden", "all") or sort not in {
+        "recent",
+        "oldest",
+        *(key for _, key in SORT_OPTIONS),
+    }:
         raise typer.BadParameter("invalid scope or sort")
+    spec = QuerySpec(
+        providers=source,
+        project=project,
+        since=since,
+        until=until,
+        scope=scope,
+        sort=sort,
+        order=order,
+        model=model,
+        activity=activity,
+    )
+    spec.filter([])
     cfg, catalog = runtime(ctx.obj, providers=source)
     try:
-        candidates = QuerySpec(source, project, since, until, scope, sort).filter(
-            catalog.sessions(), catalog
+        candidates = spec.filter(catalog.sessions(), catalog)
+        rows = QuerySpec(scope="all", sort=sort, order=order, query=query).filter(
+            candidates, catalog
         )
-        rows = QuerySpec(scope="all", sort=sort, query=query).filter(candidates, catalog)
         result = result_envelope(
             catalog,
             "list",
@@ -358,16 +387,45 @@ def refresh_command(
     project: str | None = None,
     since: str | None = None,
     until: str | None = None,
+    model: Annotated[str | None, typer.Option(help="Model name contains, ignoring case.")] = None,
+    activity: Annotated[
+        str | None, typer.Option(help="active, inactive or unknown; omission includes all states.")
+    ] = None,
+    scope: str = "visible",
+    sort: Annotated[
+        str,
+        typer.Option(
+            help="Sort by updated, created, source, project, title, id, manager-id, model, activity or size; recent/oldest are aliases."
+        ),
+    ] = "recent",
+    order: Annotated[
+        str | None,
+        typer.Option(help="asc or desc; defaults to descending dates/size and ascending text."),
+    ] = None,
+    query: str | None = None,
 ):
     from .discovery import refresh
     from .search import QuerySpec
 
-    spec = QuerySpec(source, project, since, until)
+    spec = QuerySpec(
+        providers=source,
+        project=project,
+        since=since,
+        until=until,
+        model=model,
+        activity=activity,
+        scope=scope,
+        sort=sort,
+        order=order,
+    )
     spec.filter([])
     cfg, catalog = runtime(ctx.obj, initial_scan=False)
     try:
         scans = refresh(cfg, catalog, providers=source)
-        rows = spec.filter(catalog.sessions(), catalog)
+        candidates = spec.filter(catalog.sessions(), catalog)
+        rows = QuerySpec(scope="all", sort=sort, order=order, query=query).filter(
+            candidates, catalog
+        )
         finish(
             ctx.obj,
             result_envelope(
@@ -379,9 +437,10 @@ def refresh_command(
                     "complete": all(r["state"] == "complete" for r in scans),
                     "state": "finished",
                 },
-                selected=rows,
+                selected=candidates,
                 providers=source,
             ),
+            require_search=query is not None,
         )
     finally:
         catalog.close()
@@ -659,15 +718,27 @@ def stats_command(
     scope: str = "all",
     session: str | None = None,
     group_by: str | None = None,
+    model: Annotated[str | None, typer.Option(help="Model name contains, ignoring case.")] = None,
+    activity: Annotated[
+        str | None, typer.Option(help="active, inactive or unknown; omission includes all states.")
+    ] = None,
 ):
     from .search import QuerySpec
     from .statistics import summarize
 
+    spec = QuerySpec(
+        providers=source,
+        project=project,
+        since=since,
+        until=until,
+        scope=scope,
+        model=model,
+        activity=activity,
+    )
+    spec.filter([])
     cfg, catalog = runtime(ctx.obj, providers=source)
     try:
-        candidates = QuerySpec(source, project, since, until, scope).filter(
-            catalog.sessions(), catalog
-        )
+        candidates = spec.filter(catalog.sessions(), catalog)
         if session:
             selected = catalog.get(session)
             candidates = [s for s in candidates if s.session_uid == selected.session_uid]

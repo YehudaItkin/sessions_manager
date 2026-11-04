@@ -5,6 +5,11 @@ import shlex
 from .models import safe_text
 
 _MESSAGES = {
+    "invalid_query": "Choose a supported sort field, asc/desc direction, activity and visibility. Run sessions list --help for valid options.",
+    "invalid_date": "Enter a date as YYYY-MM-DD or an ISO timestamp, such as 2026-01-01T12:00:00+02:00.",
+    "invalid_date_range": "The From date must not be after the Until date. Adjust the date range and apply again.",
+    "ambiguous_local_time": "This local time is ambiguous. Include an explicit UTC offset in the timestamp.",
+    "nonexistent_local_time": "This local time does not exist because of a clock change. Choose another time or include an explicit UTC offset.",
     "insufficient_space": "There is not enough disk space for a verified backup. Free space before retrying; the original session is retained.",
     "observed_open_handle": "A process still has this session open. Close the session in its native CLI, then refresh and retry.",
     "confirmation_expired": "The operation preview expired. Prepare a fresh preview and confirm that exact selection.",

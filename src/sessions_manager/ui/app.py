@@ -1,5 +1,6 @@
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.containers import Horizontal
+from textual.widgets import Button, DataTable, Footer, Header, Input, Static
 
 from ..discovery import refresh
 from ..messages import explain, human_data
@@ -9,6 +10,12 @@ from .screens import TextScreen
 
 class SessionsApp(App):
     TITLE = "Sessions Manager"
+    CSS = """
+    #view-controls { height: 3; }
+    #view-controls Button { margin-right: 1; }
+    #selection-summary { height: auto; max-height: 3; }
+    #sessions { height: 1fr; min-height: 0; }
+    """
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("f5", "refresh", "Refresh"),
@@ -38,24 +45,28 @@ class SessionsApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Cached catalog; F5 refreshes configured roots", id="status", markup=False)
+        with Horizontal(id="view-controls"):
+            yield Button("Filters / sort (f)", id="filter-sort")
+            yield Button("Reset all (Esc)", id="reset-view")
+        yield Static("", id="selection-summary", markup=False)
         yield Input(placeholder="Literal search; Enter applies, Escape resets", id="query")
         yield DataTable(id="sessions", cursor_type="row")
         yield Footer()
 
     def on_mount(self):
         table = self.query_one("#sessions", DataTable)
-        for label, width in [
-            ("Manager ID", 12),
-            ("Native ID", 22),
-            ("Source", 7),
-            ("Title / preview", 28),
-            ("Project", 26),
-            ("Created", 17),
-            ("Last activity", 17),
-            ("Activity", 9),
-            ("Actions", 24),
+        for label, width, key in [
+            ("Manager ID", 12, "manager-id"),
+            ("Native ID", 22, "id"),
+            ("Source", 7, "source"),
+            ("Title / preview", 28, "title"),
+            ("Project", 26, "project"),
+            ("Created", 17, "created"),
+            ("Last activity", 17, "updated"),
+            ("Activity", 9, "activity"),
+            ("Actions", 24, "actions"),
         ]:
-            table.add_column(label, width=width)
+            table.add_column(label, width=width, key=key)
         self.reload_rows()
         table.focus()
         if not self.catalog.root_states():
@@ -78,9 +89,11 @@ class SessionsApp(App):
 
         all_sessions = self.catalog.sessions(include_missing=True)
         handles = short_handles(all_sessions)
-        for s in QuerySpec(query=self.query, scope=self.scope, **self.filters).filter(
-            self.catalog.sessions(), self.catalog
-        ):
+        spec = QuerySpec(query=self.query, scope=self.scope, **self.filters)
+        rows = spec.filter(self.catalog.sessions(), self.catalog)
+        self.batch_selection.intersection_update(s.session_uid for s in rows)
+        self.query_one("#selection-summary", Static).update(safe_text(spec.describe()))
+        for s in rows:
             table.add_row(
                 handles[s.session_uid],
                 Text(safe_text(s.native_id), overflow="ellipsis", no_wrap=True),
@@ -115,6 +128,27 @@ class SessionsApp(App):
         self.query_one("#status", Static).update(
             f"{table.row_count} {self.scope}; {len(self.batch_selection)} selected; hidden {hidden}; trash {trash} | cached {display_time(min(known) if known else None)} ({local_zone()}) | {health or 'No source roots; use sources add'}"
         )
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "filter-sort":
+            self.action_filters()
+        elif event.button.id == "reset-view":
+            self.action_reset()
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected):
+        if event.data_table.id != "sessions" or event.column_key.value == "actions":
+            return
+        from ..search import QuerySpec
+
+        field = event.column_key.value
+        current, order = QuerySpec(**self.filters).sorting()
+        self.filters["sort"] = field
+        self.filters["order"] = (
+            ("asc" if order == "desc" else "desc")
+            if current == field
+            else QuerySpec(sort=field).sorting()[1]
+        )
+        self.reload_rows()
 
     def action_refresh(self):
         if not self.scanning:
@@ -176,6 +210,8 @@ class SessionsApp(App):
         self.query_one("#query", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted):
+        if event.input.id != "query":
+            return
         self.query = event.value
         self.reload_rows()
         self.query_one("#sessions", DataTable).focus()

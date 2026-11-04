@@ -85,7 +85,7 @@ Casefold на кириллице, literal %/_, односимвольный по
 фильтр показывает только A. Изменить synthetic metadata обеих сессий и обновить обзор:
 после сброса фильтра B должна быть доступна уже с обновлёнными данными. Отдельный
 невыбранный источник сохраняет прежние records/as_of, не получает ложный missing.
-Project/date filters не ограничивают enumeration выбранных roots.
+Project/model/activity/date/query filters не ограничивают enumeration выбранных roots.
 
 Ожидание: scoped lifetime usage, а не «потрачено за эти даты»; known 0 отличается от null,
 coverage видна. Forked/shared usage не удваивает общий итог.
@@ -205,3 +205,23 @@ uv run python -m tests.support.verify_native_codex --executable /absolute/path/t
 history_loaded_after_restart, archive_unarchive, neighbor_preserved, missing_original_cwd,
 cli_resume_loaded_context=true; new_sessions_from_resume=0.
 Warp `--run-warp` на установленной 0.2026.10.21 не прошёл; не считать его passing gate.
+
+## 11. Фильтры и сортировка
+
+В TUI откройте Filters / sort кнопкой или f, отметьте несколько источников (Space),
+задайте project/model/activity/период и sort/direction, Apply. Заголовок таблицы также
+сортирует кликом; повторный клик меняет направление. Настройки видны над таблицей и
+переживают F5. Reset all/Escape в основном списке возвращает defaults, Escape в диалоге
+отменяет редактирование. После обновления F5 заполнит новые Claude model metadata.
+
+```sh
+sessions list --source codex --source claude --model gpt --activity unknown --sort created --order desc
+sessions list --sort project --order asc
+sessions refresh --source claude --model sonnet --sort size --order desc
+sessions stats --model sonnet --activity inactive --group-by project
+```
+
+Source choices — OR, разные фильтры/поиск — AND. Даты по last activity, включительно;
+unknown исключается из периода, а при сортировке остаётся в конце в обоих направлениях.
+Сортировка сохраняет выбранный ID; скрывшиеся после фильтрации записи снимаются с batch.
+Сохранение настроек между отдельными запусками не добавлено.

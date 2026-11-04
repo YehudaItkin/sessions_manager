@@ -1078,3 +1078,13 @@ documentation gates T099–T102 обязательны для всей feature.
 Remaining native capabilities (not silently marked implemented):
 - [ ] T117 Design/verify scoped local Grok shared-index cleanup and restore; current native local directories plus session_search.sqlite/grok.db are intentionally unavailable for trash. Remote delete and direct shared DB mutation remain excluded.
 - [ ] T118 Enable Codex cleanup only after a native API can bind exact confirmed descendant closure/revision and recovery. Current threadId-only cascade API does not satisfy this gate.
+
+## Filtering and sorting — 2026-11-04
+
+- [X] T119 Write and observe failing QuerySpec tests for combined model/activity/source/project/date filters, expanded sort fields, direction, unknown-last/stable ties and invalid values; reproduce missing Claude model metadata.
+- [X] T120 Extend QuerySpec filtering/sorting with a fixed allowlist and compatible recent/oldest aliases; fill Claude model from already-read assistant records, with no additional source reads/schema changes.
+- [X] T121 Add failing CLI tests, then expose consistent list/refresh filters and sort/order plus stats filters; validate before runtime, preserve completeness, pagination and full-source refresh scope.
+- [X] T122 Add failing Pilot tests, then provide visible filter/sort controls/summary, labelled multi-source dialog with direction/reset and clickable table headers.
+- [X] T123 Preserve stable row/batch selection across sort; remove invisible batch targets after filtering; verify invalid inputs, reset, refresh and existing lifecycle actions.
+- [X] T124 Update README/contracts/validation, run relevant/full/packaging and SC-002 warm checks; record constitutional/privacy/compatibility self-review.
+- [X] T125 Publish and merge reviewed filtering/sorting changes through GitHub, sync local main; retain independent native capability tasks T113/T117/T118.

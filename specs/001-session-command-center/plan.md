@@ -257,3 +257,20 @@ Constitution recheck: changes trace to T109–T116 and spec amendments; regressi
 fail before implementation; no personal history is modified or committed. Native gate
 uses fresh private roots/offline loopback and no credentials. Review/merge remains via
 GitHub PR; Warp failed gate is explicit, never reported as a pass.
+
+## Filtering/sorting amendment — 2026-11-04
+
+Extend existing QuerySpec with model/activity/order and a fixed allowlist of sort fields;
+reuse it in CLI and TUI. Separate missing-value partition and stable session_uid ties
+preserve unknown-last behavior for ascending and descending. No SQL interpolation, new
+dependency, source read, migration or cross-session preference store is needed. Add a
+visible filter/sort toolbar and summary, labelled multi-source dialog, direction control,
+header click handling and visible-selection batch reconciliation. CLI compatibility keeps
+recent/oldest and existing defaults; all new arguments validate before runtime startup.
+
+Constitution check: outcomes/acceptance above precede implementation; unit/CLI/Pilot
+regressions are written and observed RED before changes. Use only synthetic catalogs for
+acceptance. Query changes are manager presentation only; native cleanup/resume limits
+remain as recorded. Full/relevant, package and SC-002 warm checks plus documented self-review
+precede the authorized GitHub PR/merge. Simpler alias-only changes were insufficient for
+multi-source controls and discoverability; no separate filter engine is introduced.

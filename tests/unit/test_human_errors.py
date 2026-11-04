@@ -56,3 +56,9 @@ def test_human_operation_errors_have_recovery_text():
     rendered = human_data(value)
     assert "F5" in rendered["items"][0]["error"]
     assert value["items"][0]["error"] == "source_changed"
+
+
+def test_invalid_filter_explanations_say_how_to_correct_input():
+    assert "YYYY-MM-DD" in explain("invalid_date")
+    assert "after" in explain("invalid_date_range")
+    assert "sort" in explain("invalid_query")

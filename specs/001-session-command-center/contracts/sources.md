@@ -108,6 +108,8 @@ File-only legacy metadata/history может читаться при извес�
 
 Metadata/history: projects/<project>/<native-id>.jsonl.
 Обязательная идентичность по sessionId/filename согласуется; cwd — из записей.
+Model — последний непустой string message.model в assistant records; user metadata
+не переопределяет модель. Это значение используется model filter/sort, не угадывается.
 Не декодировать имя project directory как гарантированный cwd.
 Root JSONL поддерживает user/assistant и whitelisted title/system/tool context.
 
