@@ -45,9 +45,16 @@ Config может задать discovery_roots_mode=replace для изолир�
 ## Выборка и ID
 
 Для list/stats/refresh доступны `--source codex|claude|cursor|grok` (повторяемый),
-`--project TEXT`, `--since ISO-DATE-OR-TIME`, `--until ISO-DATE-OR-TIME`.
-List дополнительно: `--query TEXT`, `--scope visible|hidden|all`,
-`--sort recent|oldest`, `--limit N`, `--offset N`.
+`--project TEXT`, `--model TEXT`, `--activity active|inactive|unknown`,
+`--since ISO-DATE-OR-TIME`, `--until ISO-DATE-OR-TIME`.
+List/refresh дополнительно: `--query TEXT`, `--scope visible|hidden|all`,
+`--sort updated|created|source|project|title|id|manager-id|model|activity|size`,
+`--order asc|desc`. Совместимые aliases recent/oldest сохраняют прежний порядок дат.
+List также поддерживает `--limit N`, `--offset N`; сортировка до pagination.
+Без order даты/size идут desc, текст asc; unknown last в обоих направлениях, ties по
+session_uid asc. Title использует title либо preview; ID различает native id и manager-id.
+Модель/проект — Unicode casefold substring. Model — последнее записанное значение,
+activity — сохранённое наблюдение, включая unknown. Новые параметры валидируются до runtime.
 Stats использует те же query/scope параметры при явной передаче; без них scope=all
 (включая скрытые, без корзины). List default scope=visible.
 `stats --session ID` ограничивает одной сессией;
@@ -55,8 +62,8 @@ Stats использует те же query/scope параметры при яв�
 
 У refresh параметр --source выбирает обновляемые источники: сканируются все настроенные
 включённые корни каждого выбранного источника и все его сессии. Без --source обновляются
-все включённые источники. --project/--since/--until ограничивают только показанную после
-обновления выборку, не enumeration или reconciliation. То же правило действует для R в TUI.
+все включённые источники. --project/--model/--activity/--since/--until/--query ограничивают только показанную после
+обновления выборку, не enumeration или reconciliation. То же правило действует для F5 в TUI.
 Сессии вне фильтра выбранного источника обновляются; невыбранные корни сохраняют прежние
 сведения/as_of и не помечаются missing. Признак полного scan относится к корню целиком,
 а не к отфильтрованной странице вывода.
@@ -122,7 +129,14 @@ capabilities; отдельно progress, stale/partial source status, hidden/tra
 Поиск и фильтры доступны без выхода. Enter — детали; / — поиск; o — open/resume;
 F5 — refresh; r внутри корзины — restore; f — filters/sort; Esc — reset; v — scope; Space — batch selection;
 h — hide/unhide; d — Move to trash (preview delete); s — statistics (source/project/day); t — trash; q — выход.
-Выбор привязан к ID, не позиции строки при пересортировке.
+Выбор привязан к ID, не позиции строки при пересортировке. Видимая кнопка Filters / sort
+и сводка показывают текущую выборку; диалог содержит подписанные поля, multi-source
+SelectionList, отдельные sort/direction, Apply/Reset filters/Cancel. Пустые sources и
+неверные даты сохраняют редактируемый диалог, не меняя текущую выборку. Заголовки всех
+содержательных столбцов сортируются кликом (Actions исключён); повторный клик меняет
+направление. Batch сохраняется при sort и ограничивается видимыми IDs после filter/search.
+Escape/Reset all в основном списке очищает query/filter/sort; Escape в диалоге отменяет
+его. Настройки действуют в текущем процессе и переживают refresh.
 История выводится literal text без Rich markup/ANSI/OSC исполнения.
 Диалог цели запуска предлагает current и Warp явно. Выход из native CLI возвращает
 overview и обновляет соответствующий источник.

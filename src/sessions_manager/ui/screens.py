@@ -235,81 +235,139 @@ class DetailsScreen(ModalScreen):
 
 class FiltersScreen(ModalScreen):
     BINDINGS = [("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    FiltersScreen { align: center middle; }
+    FiltersScreen #filter-dialog { width: 90%; max-width: 90; height: 90%; border: round $accent; padding: 1 2; background: $surface; }
+    FiltersScreen #filter-fields { height: 1fr; }
+    FiltersScreen Label { margin-top: 1; }
+    FiltersScreen SelectionList { height: 6; }
+    FiltersScreen #filter-buttons { height: 3; margin-top: 1; }
+    FiltersScreen #filter-buttons Button { margin-right: 1; min-width: 12; }
+    """
 
     def __init__(self, current, scope):
         super().__init__()
         self.current, self.scope = current, scope
 
     def compose(self):
-        from textual.widgets import Input, Select
+        from textual.containers import Horizontal, Vertical
+        from textual.widgets import Input, Label, Select, SelectionList
 
-        with VerticalScroll():
-            yield Static(
-                "Filters (all use AND; refresh still reads every session in chosen source roots)",
-                markup=False,
-            )
-            yield Select(
-                [
-                    ("All sources", "all"),
-                    ("Codex", "codex"),
-                    ("Claude", "claude"),
-                    ("Grok", "grok"),
-                    ("Cursor", "cursor"),
-                ],
-                value=(self.current.get("providers") or ["all"])[0],
-                allow_blank=False,
-                id="source-filter",
-            )
-            yield Input(
-                value=self.current.get("project") or "",
-                placeholder="Project contains",
-                id="project-filter",
-            )
-            yield Input(
-                value=self.current.get("since") or "",
-                placeholder="Since: YYYY-MM-DD or ISO timestamp",
-                id="since-filter",
-            )
-            yield Input(
-                value=self.current.get("until") or "",
-                placeholder="Until: YYYY-MM-DD or ISO timestamp",
-                id="until-filter",
-            )
-            yield Select(
-                [("Visible", "visible"), ("Hidden", "hidden"), ("All", "all")],
-                value=self.scope,
-                allow_blank=False,
-                id="scope-filter",
-            )
-            yield Select(
-                [("Newest first", "recent"), ("Oldest first", "oldest")],
-                value=self.current.get("sort", "recent"),
-                allow_blank=False,
-                id="sort-filter",
-            )
-            yield Button("Apply", id="apply")
-            yield Button("Cancel", id="cancel")
+        from ..models import PROVIDERS
+        from ..search import SORT_OPTIONS, QuerySpec
+
+        field, order = QuerySpec(**self.current).sorting()
+        sources = self.current.get("providers") or PROVIDERS
+        with Vertical(id="filter-dialog"):
+            yield Static("Filters / sort", markup=False)
+            with VerticalScroll(id="filter-fields"):
+                yield Label("Sources — select one or more")
+                yield SelectionList(
+                    *[(p.capitalize(), p, p in sources) for p in PROVIDERS], id="source-filter"
+                )
+                yield Label("Project contains")
+                yield Input(value=self.current.get("project") or "", id="project-filter")
+                yield Label("Model contains")
+                yield Input(value=self.current.get("model") or "", id="model-filter")
+                yield Label("Activity")
+                yield Select(
+                    [
+                        ("Any activity", "all"),
+                        ("Active", "active"),
+                        ("Inactive", "inactive"),
+                        ("Unknown", "unknown"),
+                    ],
+                    value=self.current.get("activity") or "all",
+                    allow_blank=False,
+                    id="activity-filter",
+                )
+                yield Label("Last activity from (inclusive)")
+                yield Input(
+                    value=self.current.get("since") or "",
+                    placeholder="YYYY-MM-DD or ISO timestamp",
+                    id="since-filter",
+                )
+                yield Label("Last activity until (inclusive)")
+                yield Input(
+                    value=self.current.get("until") or "",
+                    placeholder="YYYY-MM-DD or ISO timestamp",
+                    id="until-filter",
+                )
+                yield Label("Visibility")
+                yield Select(
+                    [("Visible", "visible"), ("Hidden", "hidden"), ("All", "all")],
+                    value=self.scope,
+                    allow_blank=False,
+                    id="scope-filter",
+                )
+                yield Label("Sort by")
+                yield Select(SORT_OPTIONS, value=field, allow_blank=False, id="sort-filter")
+                yield Label("Direction")
+                yield Select(
+                    [("Ascending ↑", "asc"), ("Descending ↓", "desc")],
+                    value=order,
+                    allow_blank=False,
+                    id="order-filter",
+                )
+            with Horizontal(id="filter-buttons"):
+                yield Button("Apply", id="apply", variant="primary")
+                yield Button("Reset filters", id="clear-filters")
+                yield Button("Cancel", id="cancel")
 
     def action_cancel(self):
         self.dismiss(None)
 
     def on_button_pressed(self, event):
-        from textual.widgets import Input, Select
+        from textual.widgets import Input, Select, SelectionList
+
+        from ..models import PROVIDERS, Failure
+        from ..search import QuerySpec
 
         if event.button.id == "cancel":
             self.dismiss(None)
             return
-        source = self.query_one("#source-filter", Select).value
-        self.dismiss(
-            {
-                "providers": None if source == "all" else [source],
-                "project": self.query_one("#project-filter", Input).value or None,
-                "since": self.query_one("#since-filter", Input).value or None,
-                "until": self.query_one("#until-filter", Input).value or None,
-                "scope": self.query_one("#scope-filter", Select).value,
-                "sort": self.query_one("#sort-filter", Select).value,
-            }
-        )
+        if event.button.id == "clear-filters":
+            self.query_one("#source-filter", SelectionList).select_all()
+            for field in ("project", "model", "since", "until"):
+                self.query_one(f"#{field}-filter", Input).value = ""
+            for field, value in (
+                ("activity", "all"),
+                ("scope", "visible"),
+                ("sort", "updated"),
+                ("order", "desc"),
+            ):
+                self.query_one(f"#{field}-filter", Select).value = value
+            return
+        if event.button.id != "apply":
+            return
+        sources = self.query_one("#source-filter", SelectionList).selected
+        if not sources:
+            self.notify(
+                "Select at least one source, or reset filters for all sources.", severity="warning"
+            )
+            return
+        value = {
+            "providers": None
+            if set(sources) == set(PROVIDERS)
+            else [p for p in PROVIDERS if p in sources],
+            **{
+                field: self.query_one(f"#{field}-filter", Input).value or None
+                for field in ("project", "model", "since", "until")
+            },
+            **{
+                field: self.query_one(f"#{field}-filter", Select).value
+                for field in ("scope", "sort", "order")
+            },
+            "activity": None
+            if self.query_one("#activity-filter", Select).value == "all"
+            else self.query_one("#activity-filter", Select).value,
+        }
+        try:
+            QuerySpec(**value).filter([])
+        except Failure as failure:
+            self.notify(explain(failure.code), severity="error")
+            return
+        self.dismiss(value)
 
 
 class StatisticsScreen(ModalScreen):

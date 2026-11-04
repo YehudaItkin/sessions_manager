@@ -78,9 +78,11 @@ async def test_tui_ids_and_stable_selection(isolated, tmp_path):
             await pilot.press("f")
             from textual.widgets import Select
 
-            app.screen.query_one("#sort-filter", Select).value = "oldest"
+            app.screen.query_one("#sort-filter", Select).value = "updated"
+            app.screen.query_one("#order-filter", Select).value = "asc"
             await pilot.click("#apply")
-            assert app.filters["sort"] == "oldest"
+            assert app.filters["sort"] == "updated"
+            assert app.filters["order"] == "asc"
 
 
 @pytest.mark.asyncio

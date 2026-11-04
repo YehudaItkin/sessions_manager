@@ -314,3 +314,64 @@ native IDs/transcripts/paths, production catalogs or generated corpora. Sole-mai
 self-review is recorded; requested publication is via branch/PR into main, with no bypass
 of hosted required checks. Warp's failing opt-in gate is explicitly excluded from passing
 acceptance and remains tracked, rather than being relabeled as a successful launch.
+
+## Filtering/sorting follow-up — 2026-11-04 (T119–T125)
+
+- `uv run pytest -q --tb=short`: **212 passed, 6 skipped**, 22.49 s. Skips are the five
+  explicit-corpus performance gates and the existing opt-in Warp gate. No real native
+  conversation/lifecycle operation is needed for this feature.
+- `uv run ruff check src tests`, `uv run ruff format --check src tests`, `git diff --check`:
+  PASS; **99 Python files** formatted. Product code and all final regressions were included in the final functional run.
+- Same mixed, seed-1 **10,000-session / 1,054,646,020-byte** synthetic corpus,
+  `uv run pytest tests/performance --corpus PRIVATE_CORPUS -q -s --tb=short`:
+  **5 passed**, 14.71 s. After the final table-layout fix, both affected TUI gates
+  were rerun: **2 passed**, 5.13 s. Latest results: cold discovery **8.257 s** (<=10), warm search/navigation
+  **0.932 s**, meaningful PTY TUI frame **1.697 s**, combined multi-source/project/model/
+  activity/date filtering + sorting + pagination in a new process **0.288 s**, real Pilot
+  header-click resort of 10,000 rows **1.495 s** (all warm targets <=2).
+  Unknown-last and ID selection preservation remain asserted. Same machine as the
+  preceding measurement; OS cache not flushed; no unrelated validation ran concurrently
+  with the corpus measurement. Corpus generation is excluded and targets unchanged.
+- `uv build`: PASS. Fresh outside-checkout installed wheel, **Python 3.12.12 / SQLite
+  3.54.1**, locked runtime dependencies: help/version/refresh/list/show/stats/resume dry-run/
+  cleanup preview/hide/unhide smoke PASS. New multi-filter/sort flags, model/activity stats,
+  descending native-ID order and filtered refresh also PASS. Installed Python 3.12 TUI
+  at **80x24** also passes visible toolbar, actual button click, model filtering, direction,
+  header toggle and selected-ID preservation checks. **40 sessions, 70 messages,
+  200 known tokens**, all synthetic native file hashes unchanged. Wheel SHA-256:
+  `f7462c3447db3c831fbe28640be99d942b45e30a328b15e0e9d3ace238305920`.
+
+Observed RED → GREEN evidence:
+
+| Initial failing behavior | Verified result |
+| --- | --- |
+| 20 QuerySpec cases failed: new selectors/direction absent | Combined filters, ten sort fields, direction/defaults, stable ties, unknown-last and validation pass |
+| Seven CLI cases failed: flags unsupported | list/refresh/stats share selectors; whole-selection sorting precedes pagination; invalid activity rejects before data-dir creation |
+| Claude model metadata was None despite recorded assistant model | Last recorded nonempty assistant model retained; user metadata does not override it |
+| Three Pilot cases failed: no visible button/multi-source control/header sorting | Visible controls/summary, multi-source Apply/reopen, direction/reset, actual header toggles and stable selected ID pass |
+| A 40-row table at 80x24 scrolled the toolbar off screen (also reproduced in installed wheel) | Table height fills remaining space and scrolls internally; toolbar remains clickable |
+| Enter in a filter field changed the main query | Only the main query Input submission changes search; filter draft remains editable |
+| Invalid-date messages gave generic retry advice | Format/range messages explain how to correct the field |
+
+Additional Pilot acceptance includes **80x24** keyboard Space source toggling without
+changing the main batch, Escape/cancel behavior, invalid empty-source/date drafts staying
+editable, reset defaults, current-filter retention across refresh and pruning invisible
+batch targets before actions. Model/project/activity/date/query filters never narrow
+source enumeration; a changed excluded-model neighbor is still reconciled, with source
+bytes unchanged. Existing search completeness and lifecycle tests pass.
+
+Compatibility: recent/oldest and list defaults remain; JSON envelope/data schemas and
+stored session schema are unchanged. New filter/sort options are additive. UI settings
+are per-run and survive refresh, without introducing a preferences store. The new Claude
+metadata field uses already-read known assistant records; existing cached sessions need
+F5/refresh to populate it. Unknown model/activity/size is retained; no metrics are invented.
+Independent native capability tasks T113/T117/T118 retain their previous status.
+
+Sole-maintainer self-review recorded: FR-006/spec/plan/task traceability, TDD evidence,
+read-only boundaries, literal query/text handling, source selection vs refresh scope,
+stable row identities, batch action scope, nullable data, backwards compatibility,
+package behavior and documentation checked. No dependency, migration, shared native DB
+write, live process control or external AI call was introduced. Only synthetic stores
+were used for acceptance and packaging; no personal histories/credentials/catalogs or
+benchmark corpora are included in the change. Publication follows the authorized GitHub
+branch/PR/merge workflow with no bypass of required checks.
