@@ -236,3 +236,19 @@ record preserves its verified prefix and healthy neighbors as partial; diagnosti
 not include record contents. Unexpected worker exceptions isolate their root with
 source_reader_failed; KeyboardInterrupt/SystemExit propagate. Checkpoint version changes
 revalidate prior cached records from native sources without native writes.
+
+
+## Codex archive metadata and closed WAL stores
+
+Codex archived=0/1 is retained separately from manager hidden/presence; malformed values
+make that record/root partial while healthy neighbors remain. Missing optional archived
+columns disable native archive capabilities. Archive/unarchive capabilities are additive;
+actual commit probes the real binary version and exact graph/history even when config
+declares a version. The verified native mutation profile is paginated 0.166.0 only.
+
+Codex readers may read a checkpointed WAL-mode main database with neither sidecar present
+using an explicit closed_snapshot immutable read. The main fingerprint and continued
+absence of sidecars are checked afterward. If WAL exists, normal read-only WAL semantics
+apply; a missing companion is still an error. No sidecars/repair/checkpoints are created.
+Other adapters keep the original strict default. Native archive additionally checks
+ownership/containment and observed open handles before the native writer starts.

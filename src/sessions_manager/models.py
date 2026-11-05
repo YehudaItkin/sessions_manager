@@ -16,7 +16,16 @@ PROVIDERS = ("codex", "claude", "cursor", "grok")
 NORMALIZER_VERSION = "3/" + unicodedata.unidata_version
 NAMESPACE = uuid.UUID("7875cdc8-1c78-4bc4-8345-51e66a8c26ef")
 COMPLETENESS = ("complete", "partial", "unavailable", "stale")
-CAPABILITY_NAMES = ("metadata", "history", "search", "resume", "usage", "cleanup")
+CAPABILITY_NAMES = (
+    "metadata",
+    "history",
+    "search",
+    "resume",
+    "usage",
+    "cleanup",
+    "archive",
+    "unarchive",
+)
 OPERATION_STATES = (
     "preview",
     "restore_preview",

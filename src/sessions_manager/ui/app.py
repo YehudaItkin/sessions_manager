@@ -27,6 +27,8 @@ class SessionsApp(App):
         ("h", "hide", "Hide/unhide"),
         ("d", "delete", "Move to trash"),
         ("t", "trash", "Trash"),
+        ("a", "archive", "Archive Codex"),
+        ("b", "archives", "Codex archives"),
         ("s", "statistics", "Statistics"),
         ("v", "scope", "Scope"),
         ("space", "toggle_selection", "Select"),
@@ -49,6 +51,8 @@ class SessionsApp(App):
         with Horizontal(id="view-controls"):
             yield Button("Filters / sort (f)", id="filter-sort")
             yield Button("Reset all (Esc)", id="reset-view")
+            yield Button("Archive (a)", id="native-archive")
+            yield Button("Archives (b)", id="native-archives")
         yield Static("", id="selection-summary", markup=False)
         yield Input(placeholder="Literal search; Enter applies, Escape resets", id="query")
         yield DataTable(id="sessions", cursor_type="row")
@@ -92,7 +96,11 @@ class SessionsApp(App):
         handles = short_handles(all_sessions)
         spec = QuerySpec(query=self.query, scope=self.scope, **self.filters)
         rows = spec.filter(
-            [s for s in all_sessions if s.presence in ("present", "source_unavailable")],
+            [
+                s
+                for s in all_sessions
+                if s.presence in ("present", "source_unavailable") and not s.extra.get("archived")
+            ],
             self.catalog,
         )
         self.batch_selection.intersection_update(s.session_uid for s in rows)
@@ -111,7 +119,7 @@ class SessionsApp(App):
                 s.activity,
                 " ".join(
                     key
-                    for key in ("history", "resume", "cleanup", "usage")
+                    for key in ("history", "resume", "cleanup", "usage", "archive")
                     if s.capabilities[key].state == "supported"
                 ),
                 key=s.session_uid,
@@ -139,6 +147,10 @@ class SessionsApp(App):
             self.action_filters()
         elif event.button.id == "reset-view":
             self.action_reset()
+        elif event.button.id == "native-archive":
+            self.action_archive()
+        elif event.button.id == "native-archives":
+            self.action_archives()
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected):
         if event.data_table.id != "sessions" or event.column_key.value == "actions":
@@ -159,7 +171,7 @@ class SessionsApp(App):
         if not self.scanning:
             self.run_worker(self.refresh_catalog(), group="scan", exclusive=True)
 
-    async def refresh_catalog(self):
+    async def refresh_catalog(self, providers=None):
         import asyncio
         import threading
 
@@ -170,7 +182,9 @@ class SessionsApp(App):
         self.query_one("#status", Static).update("Scanning configured source roots…")
         try:
             roots, arguments = prepare_scan(
-                self.config, self.catalog, self.filters.get("providers")
+                self.config,
+                self.catalog,
+                providers if providers is not None else self.filters.get("providers"),
             )
             stream = iter_scan(arguments, cancel)
             self.source_status = []
@@ -364,3 +378,76 @@ class SessionsApp(App):
                 scope_changed=lambda scope: setattr(self, "stats_scope", scope),
             )
         )
+
+    def action_archive(self):
+        ids = self.selected_ids()
+        if len(ids) != 1:
+            self.notify(
+                "Select one Codex session; its descendants are included in preview",
+                severity="warning",
+            )
+            return
+        self.native_archive_preview("archive", ids[0])
+
+    def action_archives(self):
+        from ..native_archive import ArchiveService
+        from .screens import ArchivesScreen
+
+        service = ArchiveService(self.config, self.catalog)
+        self.push_screen(ArchivesScreen(service.list(), self.native_archive_preview))
+
+    def native_archive_preview(self, action, selector):
+        if self.scanning:
+            self.notify("Wait for refresh to finish before native archive", severity="warning")
+            return
+        from ..models import Failure
+        from ..native_archive import ArchiveService
+        from .screens import CleanupScreen
+
+        service = ArchiveService(self.config, self.catalog)
+        try:
+            if action == "archive-retry":
+                operation = next(
+                    (op for op in service.operations() if op["operation_id"] == selector), None
+                )
+                if operation is None:
+                    raise Failure("operation_not_found", 2)
+                plan = {
+                    **operation,
+                    "action": "archive-retry",
+                    "requires_assert_closed": True,
+                    "effect": "Retry the same confirmed native IDs; no new sessions are added.",
+                }
+            else:
+                plan = service.preview(action, selector)
+        except Failure as failure:
+            self.push_screen(TextScreen(explain(failure.code)))
+            return
+
+        def confirmed(closed):
+            import json
+
+            if self.scanning:
+                self.notify("Wait for refresh to finish before native archive", severity="warning")
+                return
+            try:
+                result = (
+                    service.retry(selector, assert_closed=closed)
+                    if action == "archive-retry"
+                    else service.commit(
+                        action, selector, plan["confirmation_token"], assert_closed=closed
+                    )
+                )
+                self.batch_selection.clear()
+                self.reload_rows()
+                if result["state"] == "complete":
+                    self.run_worker(
+                        self.refresh_catalog(providers=["codex"]), group="scan", exclusive=True
+                    )
+                self.push_screen(
+                    TextScreen(json.dumps(human_data(result), ensure_ascii=False, indent=2))
+                )
+            except Failure as failure:
+                self.push_screen(TextScreen(explain(failure.code)))
+
+        self.push_screen(CleanupScreen(plan, confirmed))

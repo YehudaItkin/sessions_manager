@@ -1,5 +1,5 @@
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
@@ -77,6 +77,9 @@ class CleanupScreen(ModalScreen):
                     "purge": "IRREVERSIBLE PURGE",
                     "trash": "Move selected sessions to trash",
                     "restore": "Restore selected sessions",
+                    "archive": "Archive in Codex (history retained)",
+                    "unarchive": "Restore original Codex archive flags",
+                    "archive-retry": "Retry the same native archive operation",
                 }[self.plan["action"]],
                 markup=False,
             )
@@ -449,3 +452,84 @@ class StatisticsScreen(ModalScreen):
 
     def action_close(self):
         self.dismiss(None)
+
+
+class ArchivesScreen(ModalScreen):
+    """Separate native archives; permanent deletion and manager trash are absent."""
+
+    CSS = "#archive-table { height: 1fr; min-height: 3; }"
+    BINDINGS = [
+        ("escape", "cancel", "Close"),
+        ("u", "unarchive", "Unarchive"),
+        ("r", "retry", "Retry operation"),
+    ]
+
+    def __init__(self, data, on_action):
+        super().__init__()
+        self.data, self.on_action = data, on_action
+        self.targets = {}
+
+    def compose(self):
+        from textual.widgets import DataTable
+
+        yield Static(
+            "Cached Codex archives — history stays on disk. F5 in the main view refreshes; pending operations can be retried.",
+            markup=False,
+        )
+        yield DataTable(id="archive-table", cursor_type="row")
+        with Horizontal():
+            yield Button("Unarchive (u)", id="unarchive")
+            yield Button("Retry operation (r)", id="archive-retry")
+            yield Button("Close", id="cancel")
+
+    def on_mount(self):
+        from textual.widgets import DataTable
+
+        table = self.query_one(DataTable)
+        table.add_columns("Manager ID / Operation", "Native ID", "Title / State")
+        for session in self.data["items"]:
+            key = "session:" + session["display_id"]
+            self.targets[key] = ("unarchive", session["display_id"])
+            table.add_row(
+                session["display_id"],
+                safe_text(session["native_id"]),
+                safe_text(session["title"] or session["preview"]),
+                key=key,
+            )
+        for operation in self.data["operations"]:
+            if operation["state"] in ("complete", "failed_no_change"):
+                continue
+            key = "operation:" + operation["operation_id"]
+            self.targets[key] = ("archive-retry", operation["operation_id"])
+            table.add_row(
+                operation["operation_id"], operation["action"], operation["state"], key=key
+            )
+        table.focus()
+
+    def action_cancel(self):
+        self.dismiss(None)
+
+    def action_unarchive(self):
+        self.selected_action("unarchive")
+
+    def action_retry(self):
+        self.selected_action("archive-retry")
+
+    def selected_action(self, action):
+        from textual.widgets import DataTable
+
+        table = self.query_one(DataTable)
+        if not table.row_count:
+            return
+        key = str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
+        selected, selector = self.targets[key]
+        if selected != action:
+            return
+        self.dismiss(None)
+        self.on_action(action, selector)
+
+    def on_button_pressed(self, event):
+        if event.button.id == "cancel":
+            self.action_cancel()
+        else:
+            self.selected_action(event.button.id)

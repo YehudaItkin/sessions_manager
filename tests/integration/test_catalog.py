@@ -104,6 +104,39 @@ def test_phase10_migrates_v1_records_and_marks_new_schema(tmp_path):
     with Catalog(data) as upgraded:
         assert upgraded.get(session.display_id).hidden
         assert upgraded.get(session.display_id).presence == "present"
-        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 3
         location = upgraded.connection.execute("SELECT payload FROM locations").fetchone()
         assert location[0] is None
+
+
+def test_native_archive_rows_are_retained_but_excluded_from_active_catalog(tmp_path):
+    root = SourceRoot.create("codex", tmp_path / "native")
+    active = Session.build(root, "active", root.path / "one")
+    archived = Session.build(root, "archived", root.path / "two", extra={"archived": True})
+    with Catalog(tmp_path / "data") as catalog:
+        catalog.publish(root, [active, archived], complete=True)
+        catalog.hide([archived.session_uid], True)
+        assert [s.native_id for s in catalog.sessions()] == ["active"]
+        assert len(catalog.sessions(include_missing=True)) == 2
+        assert catalog.get(archived.display_id).hidden
+
+
+def test_archive_capability_migration_retains_v2_session_and_marks_schema(tmp_path):
+    import sqlite3
+
+    data = tmp_path / "data"
+    root = SourceRoot.create("codex", tmp_path / "native")
+    session = Session.build(root, "old-v2", root.path / "old-v2")
+    with Catalog(data) as catalog:
+        catalog.publish(root, [session], complete=True)
+        catalog.hide([session.session_uid], True)
+    with sqlite3.connect(data / "catalog.sqlite3") as legacy:
+        legacy.execute(
+            "UPDATE sessions SET payload=json_remove(payload,'$.capabilities.archive','$.capabilities.unarchive')"
+        )
+        legacy.execute("PRAGMA user_version=2")
+    with Catalog(data) as upgraded:
+        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        found = upgraded.get(session.display_id)
+        assert found.hidden and found.capabilities["archive"].state == "unavailable"
+        assert found.capabilities["unarchive"].state == "unavailable"

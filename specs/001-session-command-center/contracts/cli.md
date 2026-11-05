@@ -217,3 +217,19 @@ During refresh, early metadata is visible while history/search/usage remain part
 with scan_pending. Completed roots publish independently, including generation
 reader times and source revision ranges. Error/unfinished roots do not mark
 unseen cached sessions missing and never claim complete search.
+
+
+## Native Codex archive (FR-028)
+
+`archive MANAGER_ID [--confirm TOKEN --assert-closed]`, `unarchive MANAGER_ID` with
+the same confirmation options, `archives`, and `archive-retry OPERATION_ID --assert-closed`.
+One selected root session per plan; preview enumerates all affected descendants. JSON
+kinds native_archive_plan/native_archive_result/native_archives extend envelope v1.
+Plans contain members with stable session_id/native_id and before_archived/desired_archived/
+archived flags, expiry and a separate token. Results report operation_id, action, state,
+per-member flags, error and recovery_options. Complete returns 0; interrupted/partial or
+failed_no_change commit/retry returns 3; precondition/confirmation errors retain existing
+4/5/6/7 categories. Archive listing is cached and includes operation recovery history.
+Default list/refresh/stats exclude native archived records independently of manager hide.
+`show ID` can still inspect a cached archive; resume requires Unarchive and no pending
+operation. CLI archive startup/reindex scans Codex roots only. Other sources are untouched.

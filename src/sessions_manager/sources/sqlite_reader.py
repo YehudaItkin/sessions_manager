@@ -10,24 +10,28 @@ from ..models import Failure
 
 
 class NativeSQLite:
-    def __init__(self, path: Path, tables: dict[str, set[str]]):
+    def __init__(self, path: Path, tables: dict[str, set[str]], *, closed_snapshot=False):
         self.path, self.tables = Path(path), tables
         self.connection = None
+        self.closed_snapshot, self._immutable_stamp = closed_snapshot, None
 
     def __enter__(self):
         if not self.path.is_file() or self.path.is_symlink():
             raise Failure("native_store_unavailable", 3)
         with self.path.open("rb") as stream:
             header = stream.read(100)
-        if len(header) >= 20 and header[18] == 2:
-            if not all(
-                self.path.with_name(self.path.name + suffix).is_file()
-                for suffix in ("-wal", "-shm")
-            ):
+        sidecars = [self.path.with_name(self.path.name + s) for s in ("-wal", "-shm")]
+        if len(header) >= 20 and header[18] == 2 and not all(p.is_file() for p in sidecars):
+            if not self.closed_snapshot or any(p.exists() or p.is_symlink() for p in sidecars):
                 raise Failure("wal_sidecars_unavailable", 3)
+            from .base import fingerprint
+
+            self._immutable_stamp = fingerprint(self.path)
         try:
             self.connection = sqlite3.connect(
-                self.path.as_uri() + "?mode=ro", uri=True, timeout=0.1
+                self.path.as_uri() + "?mode=ro" + ("&immutable=1" if self._immutable_stamp else ""),
+                uri=True,
+                timeout=0.1,
             )
             self.connection.row_factory = sqlite3.Row
             self.connection.enable_load_extension(False)
@@ -81,6 +85,13 @@ class NativeSQLite:
     def __exit__(self, *args):
         if self.connection:
             self.connection.close()
+        if self._immutable_stamp:
+            from .base import fingerprint
+
+            if fingerprint(self.path) != self._immutable_stamp or any(
+                self.path.with_name(self.path.name + s).exists() for s in ("-wal", "-shm")
+            ):
+                raise Failure("source_changed", 5)
 
     def _authorize(self, action, first, second, database, origin):
         if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_TRANSACTION):

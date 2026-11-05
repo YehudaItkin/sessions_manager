@@ -173,3 +173,32 @@ with cleanup_pending=true and retry/inspect options, never restore. CLI commit/r
 nonzero while pending. Restart retry uses the original operation and accepts only the
 original verified manifest or an empty/missing entry directory; unknown new contents are
 refused. Pre-receipt partial purge still uses manifest/payload recovery as before.
+
+
+## Native Codex archive contract — 2026-11-05
+
+Archive/Unarchive are separate from manager trash and permanent deletion (FR-028).
+Preview binds root/executable/profile, exact root + descendant IDs, history revision and
+per-ID prior archived state. The same private operation lock serializes manager mutations.
+All affected sessions must remain closed (--assert-closed); active writers and ambiguous
+locations block commit. Native archive may partially succeed, so each confirmed ID is
+verified and progress persisted. Retry uses the original immutable scope; changed graphs
+or unrelated state are conflicts. Unarchive of a manager operation restores its original
+archived flags; an independently archived session can be unarchived individually. A
+pre-archived descendant is never restored implicitly. CLI/TUI show partial/retry results.
+Private native reads remain read-only; only native RPCs change archive flags. No history
+files/shared DB rollback/delete, credential copying or AI requests.
+
+
+Native unarchive in the verified 0.166.0 build also cascades; this was observed in the
+fixture gate. Reconciliation traverses parent before child and re-archives prior archived
+children when necessary. Temporary changes remain confined to the full preview scope.
+A durable per-call intent allows a lost response/crash to accept only prior/attempted
+flags within that exact subtree; changed graph/history/unknown flags conflict. Operation
+startup failure before a native archive request is failed_no_change and allows a new
+preview. After an uncertain request, retry/recovery is mandatory. Pending operation IDs
+block native resume, including fresh single-source request construction.
+
+Snapshot size is bounded to 10,000 IDs, cycles/unknown profiles fail closed. Closed-session
+assertion is mandatory and does not bypass observed handles or establish a native revision
+lock. Permanent/trash deletion T118 and the separate Warp runtime gates remain unchanged.

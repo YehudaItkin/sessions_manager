@@ -27,7 +27,7 @@ def scan_metadata(argument):
         for session in result.sessions:
             session._identity_root_ids = getattr(root, "_identity_root_ids", [root.root_id])
             session.history_state = session.search_state = session.usage_state = "partial"
-            for name in ("history", "search", "usage", "resume", "cleanup"):
+            for name in ("history", "search", "usage", "resume", "cleanup", "archive", "unarchive"):
                 session.capabilities[name] = Capability("unavailable", "scan_pending")
         result.stage = "metadata"
         result.complete = False
@@ -302,8 +302,8 @@ def publish_scan(catalog, root, scanned):
         "root_id": root.root_id,
         "provider": root.provider,
         "profile": scanned.profile,
-        "state": "complete" if scanned.complete else "partial",
-        "reason": scanned.reason,
+        "state": root.health,
+        "reason": getattr(root, "_publication_reason", scanned.reason),
         "sessions": len(scanned.sessions),
     }
 

@@ -72,3 +72,48 @@ def test_paginated_catalog_without_persisted_history_is_not_resume_proof(tmp_pat
     session = Adapter(root).discover().sessions[0]
     assert session.capabilities["resume"].state == "unavailable"
     assert session.capabilities["resume"].reason == "history_not_recorded"
+
+
+def test_native_archive_metadata_is_independent_of_hidden_and_presence(tmp_path):
+    import sqlite3
+
+    make(tmp_path, "active")
+    make(tmp_path, "archived")
+    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+        db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        db.execute("UPDATE threads SET archived=1 WHERE id='archived'")
+    sessions = {
+        s.native_id: s for s in Adapter(SourceRoot.create("codex", tmp_path)).discover().sessions
+    }
+    assert sessions["archived"].extra["archived"] is True
+    assert sessions["active"].extra["archived"] is False
+    assert sessions["archived"].presence == "present" and not sessions["archived"].hidden
+
+
+def test_closed_checkpointed_codex_store_remains_discoverable_without_sidecar_writes(tmp_path):
+    import sqlite3
+
+    make(tmp_path, rollout=False)
+    path = tmp_path / "state_5.sqlite"
+    db = sqlite3.connect(path)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.close()
+    before = path.read_bytes()
+    result = Adapter(SourceRoot.create("codex", tmp_path)).discover()
+    assert result.complete and len(result.sessions) == 1
+    assert path.read_bytes() == before
+    assert not path.with_name(path.name + "-wal").exists()
+    assert not path.with_name(path.name + "-shm").exists()
+
+
+def test_malformed_archive_flag_does_not_hide_healthy_neighbor(tmp_path):
+    import sqlite3
+
+    make(tmp_path, "healthy")
+    make(tmp_path, "bad")
+    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+        db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        db.execute("UPDATE threads SET archived='invalid' WHERE id='bad'")
+    result = Adapter(SourceRoot.create("codex", tmp_path)).discover()
+    assert not result.complete
+    assert [s.native_id for s in result.sessions] == ["healthy"]

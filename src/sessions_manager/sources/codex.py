@@ -34,7 +34,7 @@ class Adapter:
             }
             # Optional columns vary; only whitelisted names are ever selected.
 
-            with NativeSQLite(path, {"threads": {"id"}}) as reader:
+            with NativeSQLite(path, {"threads": {"id"}}, closed_snapshot=True) as reader:
                 actual = {r[1] for r in reader.connection.execute('PRAGMA table_info("threads")')}
                 allowed = {
                     "id",
@@ -51,12 +51,17 @@ class Adapter:
                     "recency_at",
                     "recency_at_ms",
                     "history_mode",
+                    "archived",
                 }
                 columns = allowed & actual
                 reader.tables["threads"] = columns
                 rows = reader.read("threads", sorted(columns))
             for row in rows:
                 try:
+                    if "archived" in row and (
+                        type(row["archived"]) is not int or row["archived"] not in (0, 1)
+                    ):
+                        raise Failure("invalid_native_record", 3)
                     locator = Path(
                         row.get("rollout_path") or root.path / "sessions" / (row["id"] + ".jsonl")
                     )
@@ -83,7 +88,11 @@ class Adapter:
                             **stamps,
                             "rollout": fingerprint(locator),
                         },
-                        extra={"history_mode": row.get("history_mode")},
+                        extra={
+                            "history_mode": row.get("history_mode"),
+                            "archived": bool(row.get("archived", False)),
+                            "archive_state_known": "archived" in row,
+                        },
                     )
                     self._capabilities(session, locator.is_file())
                     result.sessions.append(session)
@@ -122,8 +131,17 @@ class Adapter:
             session.extra.get("history_mode") == "paginated"
             and resolve_cleanup_version(self.root) == "0.166.0"
         )
+        if (
+            paginated
+            and session.extra.get("archive_state_known")
+            and resume_capability(self.root).state == "supported"
+        ):
+            name = "unarchive" if session.extra.get("archived") else "archive"
+            session.capabilities[name] = Capability("supported")
         persisted = has_rollout or (paginated and self._has_paginated_history(session.native_id))
-        if persisted:
+        if session.extra.get("archived"):
+            session.capabilities["resume"] = Capability("unavailable", "native_archived")
+        elif persisted:
             session.capabilities["resume"] = resume_capability(self.root)
         else:
             session.capabilities["resume"] = Capability(
@@ -140,7 +158,9 @@ class Adapter:
             self._persisted_threads = set()
             tables = {"thread_items": {"thread_id"}, "thread_realtime_items": {"thread_id"}}
             try:
-                with NativeSQLite(self.root.path / "thread_history_1.sqlite", tables) as reader:
+                with NativeSQLite(
+                    self.root.path / "thread_history_1.sqlite", tables, closed_snapshot=True
+                ) as reader:
                     for table in tables:
                         self._persisted_threads.update(
                             row["thread_id"] for row in reader.read(table, ["thread_id"])
@@ -181,7 +201,7 @@ class Adapter:
                             "created_at_ms",
                         },
                     }
-                    with NativeSQLite(db, tables) as reader:
+                    with NativeSQLite(db, tables, closed_snapshot=True) as reader:
                         for table in tables:
                             for row in reader.read(table, sorted(tables[table])):
                                 self._projection[row["thread_id"]].append(row)

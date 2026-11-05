@@ -454,3 +454,28 @@ default selection/search/sort. Native source data и stored session schema не 
 стабильные ties в обоих направлениях; (4) видимая кнопка/сводка, header toggle, reset,
 invalid inputs и отсутствие off-screen batch targets проверяются Textual Pilot;
 (5) фильтр не сужает refresh/reconciliation; (6) warm view остаётся в SC-002 <=2 s.
+
+
+### Native Codex Archive / Unarchive — 2026-11-05
+
+FR-028: пользователь может отдельно архивировать Codex 0.166.0 paginated сессию и вернуть
+из архива, не удаляя историю и не создавая manager trash. Archive затрагивает выбранную
+сессию и её spawned descendants; preview показывает точный набор и исходные archived
+flags. Unarchive также каскадирует; coordinator возвращает исходные flags подтверждённого набора в порядке parent-before-child, сохраняя ранее
+архивированных потомков. Архив не освобождает место на диске и доступен отдельным списком.
+
+Профиль требует проверенного native executable/home, одной доказанной location, полного
+графа, отсутствия известной активности и обязательного --assert-closed для всего набора
+на время операции. Это предусловие закрытости, не native transaction/revision lock.
+Changed graph/state/history перед первым вызовом отменяет commit. После каждого native
+вызова проверяется фактический результат: success RPC не доказывает полный cascade.
+Durable manager journal сохраняет точные IDs/prestates и позволяет retry после рестарта;
+частичный сбой не становится complete. Новые IDs не добавляются при retry. Неизвестный
+profile/граф/alias или известный writer блокируют действие. Никаких direct native DB DML,
+постоянного delete или новых AI turns при пользовательском Archive/Unarchive.
+
+Приёмка: родитель + два потомка (один уже archived) + независимый сосед; preview/cancel,
+изменение графа после preview, known active, lost response после native change, partial
+cascade, restart/retry, сохранение IDs/history/hidden state и исходных archived flags.
+CLI и TUI имеют отдельные явные Archive/Archived/Unarchive действия; подтверждение не
+переиспользует trash token. T118 для гарантированного permanent/trash cleanup не закрывается.
