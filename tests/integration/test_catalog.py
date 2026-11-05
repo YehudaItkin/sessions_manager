@@ -86,3 +86,24 @@ def test_invalid_persisted_session_fails_safely_without_rewriting(tmp_path):
         with pytest.raises(Failure, match="catalog_record_invalid"):
             catalog.sessions()
         assert catalog.connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1
+
+
+def test_phase10_migrates_v1_records_and_marks_new_schema(tmp_path):
+    import sqlite3
+
+    data = tmp_path / "manager"
+    root = SourceRoot.create("claude", tmp_path / "native")
+    session = Session.build(root, "legacy", root.path / "legacy")
+    with Catalog(data) as catalog:
+        catalog.publish(root, [session], complete=True)
+        catalog.hide([session.session_uid], True)
+    with sqlite3.connect(data / "catalog.sqlite3") as old:
+        old.execute("ALTER TABLE sessions DROP COLUMN current_trash_id")
+        old.execute("ALTER TABLE locations DROP COLUMN payload")
+        old.execute("PRAGMA user_version=1")
+    with Catalog(data) as upgraded:
+        assert upgraded.get(session.display_id).hidden
+        assert upgraded.get(session.display_id).presence == "present"
+        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        location = upgraded.connection.execute("SELECT payload FROM locations").fetchone()
+        assert location[0] is None

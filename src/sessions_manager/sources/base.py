@@ -12,6 +12,55 @@ from ..models import Capability, Failure, now_ms
 RECORD_ERRORS = (Failure, OSError, ValueError, TypeError, KeyError, AttributeError)
 
 
+def available_root(path, result):
+    try:
+        if stat.S_ISDIR(path.stat().st_mode):
+            return True
+    except OSError:
+        pass
+    result.complete, result.reason = False, "source_unavailable"
+    return False
+
+
+def discover_paths(base, pattern, result):
+    """Enumerate known shapes without pathlib.glob silently swallowing I/O errors."""
+    import fnmatch
+
+    parts = pattern.split("/")
+
+    def walk(directory, index, depth=0):
+        if depth > 64:
+            result.complete, result.reason = False, "source_enumeration_failed"
+            return
+        try:
+            with os.scandir(directory) as entries:
+                children = sorted(entries, key=lambda entry: entry.name)
+        except FileNotFoundError:
+            if depth != 0:
+                result.complete, result.reason = False, "source_enumeration_failed"
+            return  # An absent optional storage directory is a verified empty source.
+        except OSError:
+            result.complete, result.reason = False, "source_enumeration_failed"
+            return
+        part = parts[index]
+        if part == "**":
+            yield from walk(directory, index + 1, depth)
+        for entry in children:
+            try:
+                if part == "**":
+                    if entry.is_dir(follow_symlinks=False):
+                        yield from walk(Path(entry.path), index, depth + 1)
+                elif fnmatch.fnmatchcase(entry.name, part):
+                    if index == len(parts) - 1:
+                        yield Path(entry.path)
+                    elif entry.is_dir():
+                        yield from walk(Path(entry.path), index + 1, depth + 1)
+            except OSError:
+                result.complete, result.reason = False, "source_enumeration_failed"
+
+    return sorted(walk(Path(base), 0))
+
+
 @dataclass
 class SourceProfile:
     name: str

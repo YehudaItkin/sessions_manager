@@ -1,5 +1,13 @@
 from ..models import Capability, Failure, Session, timestamp
-from .base import ScanResult, fingerprint, json_lines, read_many, resume_capability
+from .base import (
+    ScanResult,
+    available_root,
+    discover_paths,
+    fingerprint,
+    json_lines,
+    read_many,
+    resume_capability,
+)
 
 
 class Adapter:
@@ -10,10 +18,10 @@ class Adapter:
 
     def discover(self):
         result = ScanResult(profile=self.profile)
-        if not self.root.path.exists():
+        if not available_root(self.root.path, result):
             return result
         for session in read_many(
-            self._discover_one, sorted((self.root.path / "projects").glob("*/*.jsonl"))
+            self._discover_one, discover_paths(self.root.path / "projects", "*/*.jsonl", result)
         ):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"

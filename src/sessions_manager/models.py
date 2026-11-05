@@ -428,6 +428,7 @@ class LaunchRequest:
     owner_uid: int
     source_root: dict = field(default_factory=dict)
     executable_fingerprint: dict = field(default_factory=dict)
+    alias_bindings: list[dict] = field(default_factory=list)
     created_at: int = field(default_factory=now_ms)
     expires_at: int = field(default_factory=lambda: now_ms() + 120000)
     state: str = "requested"
@@ -523,6 +524,7 @@ class OperationItem:
     trash_id: str | None = None
     error: str | None = None
     recovery_options: list[str] = field(default_factory=list)
+    cleanup_pending: bool = False
     updated_at: int = field(default_factory=now_ms)
 
     def __post_init__(self):
@@ -531,6 +533,8 @@ class OperationItem:
         if self.action not in ("trash", "restore", "purge") or self.state not in OPERATION_STATES:
             raise ValueError("invalid operation item")
         _milliseconds(self.updated_at)
+        if type(self.cleanup_pending) is not bool:
+            raise ValueError("invalid cleanup progress")
         if self.trash_id is not None and not re.fullmatch(r"t-[a-f0-9-]{36}", self.trash_id):
             raise ValueError("invalid trash identity")
         if not isinstance(self.recovery_options, list) or any(

@@ -154,3 +154,19 @@ Missing/non-executable native binaries cannot advertise resume supported.
 Foreground child return includes the exit code and an actionable exit/interruption
 message, and TUI restores the terminal and original stable selection.
 Native Warp runtime gate T113/T130 remains blocked by Computer Use access policy.
+
+
+## Phase 10 alias amendment — 2026-11-05
+
+Known copies of one namespace/native ID require fresh full-history digest agreement in
+one refresh cycle. While peers are pending/failed/cancelled, available history is partial
+and resume/cleanup are blocked with identity_binding_unverified. Actual differences in
+content or parent/turn membership produce identity_conflict. Verified empty enumeration
+may remove an absent peer; a failed root never proves absence. Unrelated IDs are isolated.
+Matching copies can resume but cleanup remains multiple_locations_unverified.
+
+LaunchRequest.alias_bindings records every agreed root/locator/fingerprint. Both request
+construction and handoff consult the current private catalog guard read-only, preventing
+single-root rediscovery from dropping an existing alias guard. Handoff rechecks every
+copy; changed evidence refuses exec. Warp uses the same request validation, with no
+change to its externally blocked runtime gate.

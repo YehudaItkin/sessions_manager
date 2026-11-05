@@ -25,12 +25,13 @@ def scan_metadata(argument):
         reader.metadata_only = True
         result = reader.discover()
         for session in result.sessions:
+            session._identity_root_ids = getattr(root, "_identity_root_ids", [root.root_id])
             session.history_state = session.search_state = session.usage_state = "partial"
             for name in ("history", "search", "usage", "resume", "cleanup"):
                 session.capabilities[name] = Capability("unavailable", "scan_pending")
         result.stage = "metadata"
         result.complete = False
-        result.reason = "scan_pending"
+        result.reason = result.reason or "scan_pending"
         return result
     except READ_ERRORS:
         return ScanResult(complete=False, reason="source_unavailable", stage="metadata")
@@ -67,15 +68,17 @@ def scan_root(argument):
             unchanged = old is not None and old.fingerprint == session.fingerprint
             if (
                 unchanged
+                and old.presence == "present"
                 and old.extra.get("normalizer_version") == NORMALIZER_VERSION
                 and old.history_state == "complete"
-                and (not compare_identity or old.extra.get("identity_digest"))
+                and (not compare_identity or old.extra.get("identity_digest_version") == "2")
             ):
                 session.history_state, session.search_state = old.history_state, old.search_state
                 session.capabilities["history"] = old.capabilities["history"]
                 session.capabilities["search"] = old.capabilities["search"]
                 if compare_identity:
                     session.extra["identity_digest"] = old.extra.get("identity_digest")
+                    session.extra["identity_digest_version"] = "2"
             else:
                 try:
                     history = reader.read_history(session)
@@ -92,15 +95,51 @@ def scan_root(argument):
                         history.reason,
                     )
                     result.histories[session.session_uid] = history
+                    native_verified = (
+                        history.state == "complete"
+                        and bool(history.events)
+                        and (
+                            session.provider != "codex"
+                            or getattr(session, "_native_history_verified", False)
+                        )
+                    )
+                    if native_verified:
+                        # Reappearance needs current native evidence, not metadata or
+                        # an unchanged cached projection. Recheck rare tombstone reads.
+                        if old is not None and old.presence in ("trashed", "purged"):
+                            fresh = next(
+                                (
+                                    s
+                                    for s in adapter(root).discover().sessions
+                                    if s.session_uid == session.session_uid
+                                ),
+                                None,
+                            )
+                            native_verified = (
+                                fresh is not None and fresh.fingerprint == session.fingerprint
+                            )
+                        session._native_history_verified = native_verified
                 if compare_identity and history is not None and history.state == "complete":
                     import hashlib
+                    import json
 
-                    checksum = hashlib.sha256((session.cwd or "").encode())
+                    checksum = hashlib.sha256(json.dumps(session.cwd).encode())
                     for event in history.events:
-                        checksum.update((event.native_id or event.event_uid).encode())
-                        checksum.update(event.role.encode())
-                        checksum.update((event.text or "").encode())
+                        checksum.update(
+                            json.dumps(
+                                [
+                                    event.native_id or event.event_uid,
+                                    event.role,
+                                    event.text,
+                                    event.parent_id,
+                                    event.turn_id,
+                                    event.completeness,
+                                ],
+                                ensure_ascii=False,
+                            ).encode()
+                        )
                     session.extra["identity_digest"] = checksum.hexdigest()
+                    session.extra["identity_digest_version"] = "2"
             session.extra["normalizer_version"] = NORMALIZER_VERSION
             if unchanged and old.extra.get("usage_version") == "4" and old.usage_state != "partial":
                 session.usage_state = old.usage_state
@@ -173,7 +212,11 @@ def prepare_scan(config, catalog, providers=None):
     if providers and any(p not in PROVIDERS for p in providers):
         raise Failure("invalid_source", 2)
     roots = [r for r in config.roots if r.enabled and (not providers or r.provider in providers)]
+    import uuid
+
+    cycle = str(uuid.uuid4())
     for root in roots:
+        root._scan_cycle = cycle
         root._jsonl_cursors = dict(
             catalog.connection.execute(
                 "SELECT path,payload FROM jsonl_cursors WHERE root_id=?", (root.root_id,)
@@ -182,6 +225,7 @@ def prepare_scan(config, catalog, providers=None):
         root._identity_root_ids = [
             r.root_id for r in config.roots if r.enabled and r.namespace_id == root.namespace_id
         ]
+    catalog.invalidate_aliases(roots, cycle)
     old = {s.session_uid: s for s in catalog.sessions(include_missing=True)}
     return roots, [(r, {uid: s for uid, s in old.items() if s.root_id == r.root_id}) for r in roots]
 
@@ -210,7 +254,16 @@ def iter_scan(arguments, cancel=None):
             ready, _ = wait(pending, return_when=FIRST_COMPLETED)
             for future in ready:
                 index, metadata = pending.pop(future)
-                result = future.result()
+                try:
+                    result = future.result()
+                except Exception:
+                    # Reader bugs/worker failures are isolated to their root. Control
+                    # exceptions (KeyboardInterrupt/SystemExit) deliberately propagate.
+                    result = ScanResult(
+                        complete=False,
+                        reason="source_reader_failed",
+                        stage="metadata" if metadata else "complete",
+                    )
                 cancelled = cancel and cancel.is_set()
                 if cancelled:
                     result = ScanResult(complete=False, reason="cancelled")

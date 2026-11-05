@@ -158,3 +158,18 @@ Known shared DB/WAL/SHM paths are guarded in home/sessions/workspace layouts.
 The standalone local bundle profile retains crash/retry/restore support.
 Native permanent/remote delete, direct shared DB mutation and whole-DB rollback
 remain excluded; Codex native descendant/revision/recovery gate is unchanged.
+
+
+## Phase 10 lifecycle amendment — 2026-11-05
+
+Derived transcript/search/parser cache deletion requires the selected trash entry to own
+sessions.current_trash_id. Purging an older restored backup leaves a newer trash lifecycle
+and its cache intact. Verified full native history can reactivate the same manager ID
+and hidden state; metadata/header/projection-only discoveries cannot. Restore retains
+its exact destination/no-overwrite checks.
+
+After the terminal receipt commits, final directory/fsync failure retains state=purged
+with cleanup_pending=true and retry/inspect options, never restore. CLI commit/retry exits
+nonzero while pending. Restart retry uses the original operation and accepts only the
+original verified manifest or an empty/missing entry directory; unknown new contents are
+refused. Pre-receipt partial purge still uses manifest/payload recovery as before.

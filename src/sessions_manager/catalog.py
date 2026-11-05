@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS locations(
  locator TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY(uid,root_id,locator));
 CREATE TABLE IF NOT EXISTS generations(
  id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(root_id), complete INTEGER, as_of INTEGER);
-PRAGMA user_version=1;
 """
 
 
@@ -75,11 +74,11 @@ class Catalog:
                 raise Failure("catalog_corrupt", 6)
             if (
                 int.from_bytes(header[68:72], "big") != 0x53455353
-                or int.from_bytes(header[60:64], "big") > 1
+                or int.from_bytes(header[60:64], "big") > 2
             ):
                 raise Failure("unsupported_catalog_schema", 4)
         self.connection = sqlite3.connect(self.path, timeout=5)
-        if self.connection.execute("PRAGMA user_version").fetchone()[0] > 1:
+        if self.connection.execute("PRAGMA user_version").fetchone()[0] > 2:
             self.connection.close()
             raise Failure("unsupported_catalog_schema", 4)
         if new:
@@ -104,11 +103,14 @@ class Catalog:
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS jsonl_cursors(root_id TEXT,path TEXT,uid TEXT REFERENCES sessions(uid),payload BLOB,PRIMARY KEY(root_id,path))"
         )
-        if "payload" not in {
-            r[1] for r in self.connection.execute("PRAGMA table_info(generations)")
-        }:
-            self.connection.execute("ALTER TABLE generations ADD COLUMN payload TEXT")
-            self.connection.commit()
+        self.connection.execute("BEGIN IMMEDIATE")
+        with self.writer() as db:
+            for table in ("generations", "locations"):
+                if "payload" not in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN payload TEXT")
+            if "current_trash_id" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
+                db.execute("ALTER TABLE sessions ADD COLUMN current_trash_id TEXT")
+            db.execute("PRAGMA user_version=2")
 
     def _private_sidecars(self):
         for suffix in ("-wal", "-shm"):
@@ -197,58 +199,25 @@ class Catalog:
                     (session.session_uid,),
                 ).fetchone()
                 if previous:
-                    old = session_payload(previous["payload"])
-                    active_roots = getattr(session, "_identity_root_ids", [root.root_id])
-                    signatures = {
-                        key: value
-                        for key, value in old.extra.get("identity_signatures", {}).items()
-                        if key in active_roots
-                    }
-                    if old.root_id != root.root_id and old.root_id in active_roots:
-                        signatures.setdefault(old.root_id, old.extra.get("identity_digest"))
-                    if len(active_roots) > 1:
-                        signatures[root.root_id] = session.extra.get("identity_digest")
-                        session.extra["identity_signatures"] = signatures
-                    if len(signatures) > 1 and (
-                        None in signatures.values() or len(set(signatures.values())) > 1
-                    ):
-                        from .models import Capability, HistoryResult
-
-                        reason = (
-                            "identity_conflict"
-                            if None not in signatures.values()
-                            else "identity_binding_unverified"
-                        )
-                        for name in ("resume", "cleanup", "history", "search", "usage"):
-                            session.capabilities[name] = Capability("unsafe", reason)
-                        session.history_state = session.search_state = session.usage_state = (
-                            "unavailable"
-                        )
-                        session.title = "Conflicting session locations"
-                        session.preview = None
-                        session.cwd = None
-                        session.project_id = None
-                        session.model = None
-                        session.extra["identity_conflict"] = reason
-                        if hasattr(session, "_prepared_chunks"):
-                            del session._prepared_chunks
-                        if histories is not None:
-                            histories[session.session_uid] = HistoryResult(
-                                [], "unavailable", reason
-                            )
-                        db.execute(
-                            "DELETE FROM usage_memberships WHERE uid=? OR origin_uid=?",
-                            (session.session_uid, session.session_uid),
-                        )
-                        db.execute(
-                            "DELETE FROM usage_snapshots WHERE uid=?", (session.session_uid,)
-                        )
                     session.hidden = bool(previous["hidden"])
-                    if previous["presence"] in ("trashed", "purged"):
-                        session.presence = previous["presence"]
-                session.current_generation = generation
+                active_roots = getattr(session, "_identity_root_ids", [root.root_id])
+                incoming_root = session.root_id
+                native_verified = getattr(session, "_native_history_verified", False)
+                native = (
+                    json.dumps(
+                        {
+                            "session": public(session),
+                            "cycle": getattr(root, "_scan_cycle", None),
+                            "stage": scan.stage if scan else "complete",
+                        }
+                    )
+                    if len(active_roots) > 1
+                    else None
+                )
+                # Store per-location native evidence before applying aggregate guards.
+                # INSERT session first satisfies the existing location foreign key.
                 db.execute(
-                    "INSERT INTO sessions VALUES (?,?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET payload=excluded.payload,presence=excluded.presence",
+                    "INSERT OR IGNORE INTO sessions(uid,namespace,native_id,payload,hidden,presence) VALUES (?,?,?,?,?,?)",
                     (
                         session.session_uid,
                         session.namespace_id,
@@ -259,20 +228,75 @@ class Catalog:
                     ),
                 )
                 db.execute(
-                    "INSERT INTO locations VALUES (?,?,?,?) ON CONFLICT(uid,root_id,locator) DO UPDATE SET generation=excluded.generation",
-                    (session.session_uid, root.root_id, session.locator, generation),
+                    "INSERT INTO locations(uid,root_id,locator,generation,payload) VALUES (?,?,?,?,?) ON CONFLICT(uid,root_id,locator) DO UPDATE SET generation=excluded.generation,payload=excluded.payload",
+                    (session.session_uid, root.root_id, session.locator, generation, native),
                 )
+                if len(active_roots) > 1:
+                    chosen = self._alias_session(
+                        db, session, active_roots, getattr(root, "_scan_cycle", None)
+                    )
+                    if (
+                        chosen.root_id == incoming_root
+                        and chosen.extra.get("identity_conflict") != "identity_conflict"
+                        and hasattr(session, "_prepared_chunks")
+                    ):
+                        chosen._prepared_chunks = session._prepared_chunks
+                    session = chosen
+                session.current_generation = generation
+                if previous:
+                    session.hidden = bool(previous["hidden"])
+                    if previous["presence"] in ("trashed", "purged") and not (
+                        native_verified
+                        and session.root_id == incoming_root
+                        and not session.extra.get("identity_conflict")
+                    ):
+                        session.presence = previous["presence"]
+                self._save_session(db, session)
+                if session.root_id != incoming_root:
+                    continue  # Late metadata must not replace the selected copy's history.
+                if session.extra.get("identity_conflict") == "identity_conflict":
+                    from .models import HistoryResult
+
+                    if histories is not None:
+                        histories[session.session_uid] = HistoryResult(
+                            [], "unavailable", "identity_conflict"
+                        )
+                    db.execute(
+                        "DELETE FROM usage_memberships WHERE uid=? OR origin_uid=?",
+                        (session.session_uid, session.session_uid),
+                    )
+                    db.execute("DELETE FROM usage_snapshots WHERE uid=?", (session.session_uid,))
                 if histories and session.session_uid in histories:
                     self._replace_history(db, session, histories[session.session_uid])
             if usages:
                 for session in sessions:
-                    if session.session_uid in usages and not session.extra.get("identity_conflict"):
+                    if (
+                        session.session_uid in usages
+                        and (chosen := self.get(session.session_uid)).root_id == root.root_id
+                        and chosen.extra.get("identity_conflict") != "identity_conflict"
+                    ):
                         self._replace_usage(db, session, usages[session.session_uid])
             if complete:
+                affected = [
+                    r[0]
+                    for r in db.execute(
+                        "SELECT DISTINCT uid FROM locations WHERE root_id=? AND generation<>?",
+                        (root.root_id, generation),
+                    )
+                ]
                 db.execute(
                     "DELETE FROM locations WHERE root_id=? AND generation<>?",
                     (root.root_id, generation),
                 )
+                for uid in affected:
+                    current = self.get(uid)
+                    active = getattr(root, "_identity_root_ids", [root.root_id])
+                    if len(active) > 1:
+                        revised = self._alias_session(
+                            db, current, active, getattr(root, "_scan_cycle", None)
+                        )
+                        revised.hidden, revised.presence = current.hidden, current.presence
+                        self._save_session(db, revised)
                 db.execute(
                     "UPDATE sessions SET presence='missing' WHERE presence IN ('present','source_unavailable','missing') AND uid NOT IN (SELECT uid FROM locations)"
                 )
@@ -288,6 +312,118 @@ class Catalog:
                         (root.root_id, path, owner.session_uid, checkpoint),
                     )
         return generation
+
+    @staticmethod
+    def _save_session(db, session):
+        db.execute(
+            "UPDATE sessions SET payload=?,presence=?,current_trash_id=CASE WHEN ?='present' THEN NULL ELSE current_trash_id END WHERE uid=?",
+            (json.dumps(public(session)), session.presence, session.presence, session.session_uid),
+        )
+
+    def _alias_session(self, db, incoming, active_roots, cycle):
+        from .models import Capability
+
+        evidence = []
+        for row in db.execute(
+            "SELECT root_id,payload FROM locations WHERE uid=?", (incoming.session_uid,)
+        ):
+            if row["root_id"] not in active_roots:
+                continue
+            if row["payload"]:
+                item = json.loads(row["payload"])
+                item["session"] = Session.from_dict(item["session"])
+            else:
+                item = {"session": incoming, "cycle": None, "stage": "metadata"}
+            evidence.append(item)
+        if not evidence:
+            return incoming
+
+        def full(item):
+            return (
+                item["stage"] == "complete"
+                and item["session"].extra.get("identity_digest_version") == "2"
+                and bool(item["session"].extra.get("identity_digest"))
+            )
+
+        best = max(
+            evidence,
+            key=lambda item: (
+                full(item),
+                item["cycle"] == cycle,
+                item["session"].root_id == incoming.root_id,
+            ),
+        )
+        chosen = best["session"]
+        signatures = {
+            e["session"].root_id: e["session"].extra.get("identity_digest")
+            if full(e) and e["cycle"] == cycle
+            else None
+            for e in evidence
+        }
+        chosen.extra["identity_signatures"] = signatures
+        chosen.extra.pop("alias_bindings", None)
+        chosen.extra.pop("identity_conflict", None)
+        if len(evidence) < 2:
+            return chosen
+        pending = None in signatures.values()
+        conflict = not pending and len(set(signatures.values())) > 1
+        if pending or conflict:
+            reason = "identity_conflict" if conflict else "identity_binding_unverified"
+            chosen.extra["identity_conflict"] = reason
+            for name in ("resume", "cleanup"):
+                chosen.capabilities[name] = Capability("unsafe", reason)
+            for name in ("history", "search", "usage"):
+                if conflict:
+                    setattr(chosen, name + "_state", "unavailable")
+                    chosen.capabilities[name] = Capability("unsafe", reason)
+                elif getattr(chosen, name + "_state") == "complete":
+                    setattr(chosen, name + "_state", "partial")
+            if conflict:
+                chosen.title, chosen.preview, chosen.cwd = (
+                    "Conflicting session locations",
+                    None,
+                    None,
+                )
+                chosen.project_id = chosen.model = None
+                db.execute("DELETE FROM event_memberships WHERE uid=?", (chosen.session_uid,))
+                db.execute("DELETE FROM chunks WHERE uid=?", (chosen.session_uid,))
+        else:
+            chosen.capabilities["cleanup"] = Capability(
+                "unavailable", "multiple_locations_unverified"
+            )
+            chosen.extra["alias_bindings"] = [
+                {
+                    "root": json.loads(
+                        db.execute(
+                            "SELECT payload FROM roots WHERE root_id=?", (e["session"].root_id,)
+                        ).fetchone()[0]
+                    ),
+                    "fingerprint": e["session"].fingerprint,
+                    "locator": e["session"].locator,
+                }
+                for e in evidence
+            ]
+        return chosen
+
+    def invalidate_aliases(self, roots, cycle):
+        """A previous cycle's agreement is not proof for a refresh in flight."""
+        with self.writer() as db:
+            for root in roots:
+                active = root._identity_root_ids
+                if len(active) < 2:
+                    continue
+                uids = [
+                    r[0]
+                    for r in db.execute(
+                        "SELECT uid FROM locations WHERE root_id=? AND uid IN (SELECT uid FROM locations GROUP BY uid HAVING COUNT(*)>1)",
+                        (root.root_id,),
+                    )
+                ]
+                for uid in uids:
+                    current = self.get(uid)
+                    revised = self._alias_session(db, current, active, cycle)
+                    revised.hidden, revised.presence = current.hidden, current.presence
+                    self._save_session(db, revised)
 
     def sessions(self, *, include_missing=False):
         sql = "SELECT payload,hidden,presence FROM sessions"

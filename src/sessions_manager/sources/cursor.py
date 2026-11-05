@@ -3,7 +3,15 @@ import json
 from pathlib import Path
 
 from ..models import Capability, Failure, Session, timestamp
-from .base import ScanResult, directory_inventory, json_file, read_many, resume_capability
+from .base import (
+    ScanResult,
+    available_root,
+    directory_inventory,
+    discover_paths,
+    json_file,
+    read_many,
+    resume_capability,
+)
 from .sqlite_reader import NativeSQLite
 
 
@@ -17,11 +25,11 @@ class Adapter:
 
     def discover(self):
         result = ScanResult(profile=self.profile)
-        if not self.root.path.exists():
+        if not available_root(self.root.path, result):
             return result
         home = self.root.path / "chats" if (self.root.path / "chats").is_dir() else self.root.path
         candidates = {}
-        for sidecar in home.glob("*/*/meta.json"):
+        for sidecar in discover_paths(home, "*/*/meta.json", result):
             try:
                 meta = json_file(sidecar)
                 cwd = meta.get("cwd")
@@ -38,7 +46,7 @@ class Adapter:
         self._workspace_cwds = {
             key: next(iter(values)) for key, values in candidates.items() if len(values) == 1
         }
-        for session in read_many(self._discover_one, sorted(home.glob("*/*/store.db"))):
+        for session in read_many(self._discover_one, discover_paths(home, "*/*/store.db", result)):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"
             else:

@@ -40,3 +40,17 @@ def test_symlink_hardlink_and_escape_rejected(tmp_path):
         inventory(root, tmp_path)
     with pytest.raises(Failure):
         inventory(tmp_path / "outside", root)
+
+
+@pytest.mark.parametrize("name", ["../neighbor", "nested/../../neighbor"])
+def test_dot_dot_never_escapes_native_boundary(tmp_path, name):
+    from sessions_manager.fsops import secure_path
+
+    root = tmp_path / "source"
+    root.mkdir(mode=0o700)
+    (root / "nested").mkdir(mode=0o700)
+    neighbor = tmp_path / "neighbor"
+    neighbor.write_text("synthetic neighboring history")
+    with pytest.raises(Failure, match="path_outside_source_root"):
+        secure_path(root / name, root)
+    assert neighbor.read_text() == "synthetic neighboring history"

@@ -7,6 +7,13 @@ from sessions_manager.models import Failure
 from sessions_manager.sources.jsonl_cursor import VERSION, JSONLCursor
 
 
+def test_projection_depth_is_bounded_without_recursion_error(tmp_path):
+    path = tmp_path / "deep.jsonl"
+    path.write_text('{"message":{"content":' + "[" * 1100 + '"nested"' + "]" * 1100 + "}}\n")
+    with pytest.raises(Failure, match="invalid_native_record"):
+        list(JSONLCursor().read(path))
+
+
 @pytest.mark.parametrize("payload", [[], {"version": VERSION}, {"version": VERSION, "offset": -1}])
 def test_corrupt_checkpoint_rebuilds_from_native_file(tmp_path, payload):
     path = tmp_path / "history.jsonl"

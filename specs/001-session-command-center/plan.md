@@ -305,3 +305,42 @@ original-text match context, statistics selection and activity range, and Cursor
 context-only counters. The all-session statistics default remains unchanged.
 Native mutation guards are retained; shared Grok feasibility is concluded as
 unavailable, and Warp runtime remains externally blocked rather than passing.
+
+
+## Phase 10 boundary and lifecycle decisions — 2026-11-05
+
+Private directories bind a descriptor walk from `/` before creation/use. Owners and
+write permissions are checked at every ancestor; only root-controlled platform aliases
+are rebound to canonical paths, and root-owned sticky parents are permitted. Native
+artifact scope rejects lexical dot-dot before resolution or filesystem mutation.
+Existing user directories are never chmodded.
+
+Enumeration records errors explicitly instead of relying on glob's suppressed errors.
+JSONL checkpoint projection has depth/node limits; ordinary worker exceptions become
+partial root results, while control interrupts propagate. Available neighbors/cached
+history are retained and unavailable roots do not establish absence.
+
+Alias reconciliation reuses SessionLocation with optional private payloads containing
+native metadata/capabilities, fingerprint, versioned graph/content digest and refresh
+cycle. This evidence is stored only for namespaces with multiple configured roots.
+Metadata cannot replace an available full snapshot; pending known copies block dangerous
+actions, actual conflicting copies suppress ambiguous content, and matching fresh copies
+permit resume. Cleanup still requires one proven location. Launch checks the current
+read-only catalog guard plus every agreed native fingerprint immediately before handoff.
+The simpler aggregate-signatures approach lost per-copy capabilities and freshness when
+metadata/full phases arrived in different orders; location evidence fixes that within
+the existing catalog, without a coordinator service or transcript duplication.
+
+sessions.current_trash_id binds derived cache retention to the current trash generation.
+Legacy ownership is inferred only for one unambiguous active entry. Verified full native
+history may revive a stable hidden/session ID; headers, metadata and projection-only
+Codex records cannot. A committed purge receipt remains terminal even when final private
+manifest/directory removal or fsync fails. cleanup_pending exposes that residual work,
+keeps a nonzero CLI result and resumes the same operation after restart without accepting
+new contents. No new source paths enter retry scope.
+
+Constitution recheck: Phase 10 code changes follow observed failing synthetic regressions;
+manager migrations are additive, source readers remain read-only, and no dependency is
+added. Native Warp T113/T130/T144 remains blocked by the recorded access denial; Codex
+T118 and Grok shared-index capability gates are unchanged. Package, full suite and the
+unchanged SC-002 corpus thresholds are required before authorized GitHub delivery.

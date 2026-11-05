@@ -4,28 +4,23 @@ from __future__ import annotations
 
 import os
 import shutil
-import stat
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 import tomli_w
 
+from .fsops import trusted_directory
 from .models import Failure, SourceRoot
 
 DEFAULT_DATA = Path.home() / "Library/Application Support/sessions-manager"
 
 
 def ensure_private(path: Path):
-    path = Path(path)
-    if path.is_symlink():
-        raise Failure("unsafe_data_dir", 6)
-    if not path.exists():
-        path.mkdir(mode=0o700, parents=True)
-    info = path.stat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise Failure("unsafe_data_dir", 6)
-    return path
+    try:
+        return trusted_directory(path, private=True, create=True)
+    except (Failure, OSError, ValueError):
+        raise Failure("unsafe_data_dir", 6) from None
 
 
 def private_file(path: Path, content: bytes):
@@ -117,7 +112,7 @@ class Config:
             if lexical.is_relative_to(source) or source.is_relative_to(lexical):
                 raise Failure("data_dir_source_overlap", 6)
         os.umask(0o077)
-        ensure_private(self.data_dir)
+        self.data_dir = ensure_private(self.data_dir)
         for name in ("trash", "launches"):
             ensure_private(self.data_dir / name)
 
@@ -137,7 +132,8 @@ class Config:
         raw.setdefault("sources", []).append(
             {"provider": provider, "path": str(path), "namespace": namespace}
         )
-        self.config_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        parent = trusted_directory(self.config_path.parent, create=True, owned=False)
+        self.config_path = parent / self.config_path.name
         temporary = self.config_path.with_name(self.config_path.name + ".new")
         private_file(temporary, tomli_w.dumps(raw).encode())
         os.replace(temporary, self.config_path)
