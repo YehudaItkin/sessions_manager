@@ -243,3 +243,25 @@ JSONL cache находится только в private manager catalog. Prefix S
 Замена/усечение/дрейф версии пересобирает checkpoint; purge удаляет его вместе
 с cached history выбранной trashed-сессии. Это не обещание tail-only disk I/O.
 Warp native runtime по-прежнему blocked; для запуска использовать Current terminal.
+
+
+## Native Codex archive acceptance
+
+Use an independently closed supported Codex home. In the TUI choose one Codex row and
+Archive (a), review every descendant/flag, confirm closed status and the exact action.
+The rows leave the active view; Archives (b) retains them. Select the parent and Unarchive
+(u): original IDs/hidden state and previously archived descendants are preserved. A
+partial result remains listed by operation ID and can be retried with r on its operation
+row, or `sessions archive-retry OPERATION_ID --assert-closed`. Archive preserves disk data.
+
+Reproduce the harmless native gate explicitly (no personal stores or credentials):
+
+```sh
+uv run pytest tests/acceptance/test_codex_archive_runtime.py -q -s \
+  --codex-archive-executable /absolute/path/to/codex
+```
+
+It creates four native synthetic paginated histories with a closed loopback provider,
+seeds only their fixture spawn edges while the native writer is stopped, then verifies
+real native cascades and manager recovery across restart. No HOME substitution, direct
+production native DB mutation, real provider call or personal session is involved.

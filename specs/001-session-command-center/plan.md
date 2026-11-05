@@ -344,3 +344,34 @@ manager migrations are additive, source readers remain read-only, and no depende
 added. Native Warp T113/T130/T144 remains blocked by the recorded access denial; Codex
 T118 and Grok shared-index capability gates are unchanged. Package, full suite and the
 unchanged SC-002 corpus thresholds are required before authorized GitHub delivery.
+
+
+## Codex archive decision — 2026-11-05
+
+FR-028 adds a native archive coordinator beside the existing file-trash coordinator,
+reusing its manager operation lock. Only native app-server archive/unarchive RPCs mutate
+Codex; a bounded read-only native state/graph snapshot defines the exact preview. The
+existing single catalog stores private plans/progress/prestates without transcript copies.
+A mandatory closed-set assertion and observed-writer checks define the supported profile;
+no native atomic/revision lock is claimed. Post-call state verification catches partial
+cascades, and restart retries reconcile the same confirmed IDs. New/unexpected descendants
+block retry rather than silently widening scope. Separate UI/listing retain archived
+sessions, while ordinary overview/stats exclude them. No dependency or daemon is added.
+
+A generic reuse of filesystem trash cannot restore shared paginated stores; a plain
+archive command cannot verify partial cascade or remember prior archived children. The
+small native coordinator/journal is therefore required. Native gate uses a fresh offline
+CODEX_HOME and only artificial histories; fixture graph construction is confined to test
+support, never production code or personal stores. Existing Codex cleanup and Warp gates
+remain unchanged. TDD, full/package/SC-002 and GitHub review precede integration.
+
+
+Native archive consistency follow-up: archive/unarchive both cascade in the installed
+build, so journaled parent-first reconciliation restores prior flags. Plans/operations
+are validated on persistence boundaries. Actual executable version is probed independently
+of a config claim. Resume reads pending native operation scope from the private catalog
+without creating state. SessionLocation retains post-operation observation watermarks;
+older reader results cannot undo verified flags or publish stale content as fresh. Native
+archive explicitly invalidates content/usage caches; one Codex refresh rebuilds them.
+This avoids a new cache service or duplicate transcript index. All source mutations remain
+native RPC; filesystem inventory is validation/hash-only.

@@ -274,3 +274,33 @@ Existing v1 sessions/hidden state/locations are retained. Older v1 binaries reje
 from its header before writing, rather than attempting positional inserts with the old
 column count. Downgrade requires a separately retained v1 catalog; use the current binary
 with upgraded catalogs. Foreign/future application/schema IDs remain rejected.
+
+
+## Native archive state — 2026-11-05
+
+Session.extra.archived is a native Codex flag, separate from manager hidden and presence.
+Existing payloads without the flag are active. Ordinary list/stats exclude archived rows;
+the archive list retains their stable IDs and hidden flags. Manager archive plans/progress
+store root/session identity, exact members, original flags and per-operation recovery state
+in private dedicated tables. They retain no transcripts and share the cleanup operation
+lock. Read-only refresh never changes native archive state.
+
+
+Archive adds catalog schema v3: v1/v2 records migrate without losing IDs/history/hidden
+state; missing archive/unarchive capabilities default unavailable until refresh. Older
+binaries reject v3 before writes. Downgrade requires a retained older catalog.
+
+`native_archive_plans` stores token digests, action/root selector, private snapshot/prestates/
+desired flags, expiry and consumed operation ID. `native_archive_operations` stores that
+immutable plan, last verified flags, a durable intent before each native call, whether a
+request may have started, and running/complete/recovery_required/failed_no_change outcome.
+Typed validation rejects malformed persisted scope/flags before RPC, without repair.
+Journal contains metadata/IDs/hashes, never transcript copies or credentials.
+
+SessionLocation payload also retains post-archive metadata and native_archive_observed_at
+watermarks. Publication begins a SQLite writer transaction before loading this evidence.
+Readers started before the verified observation cannot undo it, replace history/usage or
+parser checkpoints; that generation is explicitly partial. A later fresh reader retains
+the watermark. Archive conservatively marks cached content/usage stale for reindex rather
+than assigning a fresh native fingerprint to old cached content. TUI refreshes Codex
+after completion; CLI reindex follows the existing runtime stale-cache gate.

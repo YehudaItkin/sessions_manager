@@ -27,6 +27,7 @@ def catalog_alias_binding(data_dir, uid):
     """Read the current alias guard without creating/migrating manager state."""
     import sqlite3
     import stat
+    from contextlib import closing
 
     from .catalog import session_payload
     from .fsops import trusted_directory
@@ -49,10 +50,23 @@ def catalog_alias_binding(data_dir, uid):
     ):
         raise Failure("unsafe_catalog", 6)
     try:
-        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("PRAGMA query_only=ON")
             db.execute("PRAGMA trusted_schema=OFF")
             row = db.execute("SELECT payload,presence FROM sessions WHERE uid=?", (uid,)).fetchone()
+            if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='native_archive_operations'"
+            ).fetchone():
+                from .models import identity
+                from .native_archive import TERMINAL, load_operation
+
+                for saved in db.execute("SELECT payload FROM native_archive_operations"):
+                    operation = load_operation(saved[0])
+                    namespace = operation["plan"]["binding"]["namespace"]
+                    if operation["state"] not in TERMINAL and any(
+                        identity(namespace, tid) == uid for tid in operation["plan"]["before"]
+                    ):
+                        raise Failure("archive_operation_pending", 5)
     except sqlite3.Error:
         raise Failure("catalog_binding_unavailable", 6) from None
     if row is None:

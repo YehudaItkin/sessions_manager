@@ -5,6 +5,17 @@ import shlex
 from .models import safe_text
 
 _MESSAGES = {
+    "archive_journal_invalid": "A saved native archive plan/journal is invalid. Preserve the catalog for inspection; no automatic repair or native request was performed.",
+    "archive_profile_unverified": "Native archive is verified for Codex 0.166.0 paginated stores with a configured executable/native home. Refresh or use the native CLI.",
+    "archive_source_changed": "The confirmed archive graph, history or state changed. No new IDs are included. Inspect the operation and refresh before a new preview.",
+    "archive_graph_unavailable": "The complete Codex descendant graph could not be verified. Native archive is unavailable for this store.",
+    "native_archived": "This Codex session is archived. Open Codex archives and choose Unarchive before resuming.",
+    "native_archive_state_changed": "The session archive state changed. Refresh and prepare the matching Archive or Unarchive action.",
+    "archive_operation_pending": "A native archive operation needs recovery. Open Codex archives and retry its operation ID first.",
+    "native_archive_partial": "Codex changed only part of the confirmed archive set. Retry the same operation after closing these sessions.",
+    "native_archive_io_error": "The native reply was lost or unavailable. The operation journal is retained; close Codex sessions and retry the same operation.",
+    "native_archive_timeout": "Codex did not reply in time. Inspect Codex archives and retry the same operation; do not start a replacement operation.",
+    "native_archive_failed": "Codex refused an archive step. The journal preserves its exact scope. Inspect Codex archives and retry after resolving the native issue.",
     "invalid_query": "Choose a supported sort field, asc/desc direction, activity and visibility. Run sessions list --help for valid options.",
     "invalid_date": "Enter a date as YYYY-MM-DD or an ISO timestamp, such as 2026-01-01T12:00:00+02:00.",
     "invalid_date_range": "The From date must not be after the Until date. Adjust the date range and apply again.",
@@ -24,7 +35,7 @@ _MESSAGES = {
     "handle_probe_unavailable": "Open-session checks are unavailable. Check that lsof is installed and accessible before retrying cleanup.",
     "source_changed": "The session changed since it was selected. Refresh (F5) and try again.",
     "executable_changed": "The native CLI changed. Refresh (F5) and prepare the operation again.",
-    "native_cascade_unbounded": "Codex archive/delete can also affect descendant sessions. Safe trash is unavailable for this profile; use Hide to remove it from the manager view.",
+    "native_cascade_unbounded": "Codex archive/delete can also affect descendant sessions. Safe trash is unavailable for this profile; use the separate native Archive action for verified closed stores, or Hide to remove it from the manager view.",
     "shared_dependency_unverified": "This session has a shared index or related sessions whose cleanup is not verified. Use Hide, or manage it in the native CLI.",
     "cleanup_profile_unverified": "Safe cleanup is not verified for this CLI version or session format. Check the configured executable; use Hide meanwhile.",
     "unknown_bundle_topology": "The session contains files outside the verified cleanup layout. Use Hide, or inspect it in the native CLI.",

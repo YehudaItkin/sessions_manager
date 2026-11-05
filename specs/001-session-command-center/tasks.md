@@ -1182,3 +1182,14 @@ Assessment: 2026-11-05. Findings F1–F6 assess the present implementation again
 - [X] T145 **MEDIUM** [F6] Завершать interrupted purge согласованно с уже сохранённым terminal receipt per FR-019, T068/T078/T080 (partial).
   Файлы: `src/sessions_manager/cleanup.py`, `src/sessions_manager/fsops.py`, `tests/integration/test_cleanup_recovery.py`.
   Purged receipt коммитится до удаления последнего entry directory. Если remove_owned_tree удалил directory/manifest, но последующий fsync завершился ошибкой, общий exception handler меняет purged на recovery_required; повтор затем требует отсутствующий manifest и остаётся в recovery_required. Сохранить истинный durable outcome и отдельно согласовывать завершающую уборку, не понижая committed purge до невосстановимого состояния. Проверить crash после receipt до удаления directory, ошибку после удаления manifest/directory, частично завершённый terminal cleanup и повтор по тому же op_id после рестарта. Остатки удалять только в исходной подтверждённой manager-owned области, без нового source scope, потери соседей или ложного сообщения об оставшемся recoverable payload.
+
+
+## Phase 11: Native Codex Archive / Unarchive
+
+User-approved 2026-11-05; FR-028. Independent of blocked Warp and conditional T118.
+
+- [X] T146 Document the separate archive contract and verify installed 0.166.0 native cascade/unarchive on a fresh offline fixture: parent, two descendants including pre-archived, unrelated neighbor; exact history/ID preservation.
+- [X] T147 Write failing native archived-metadata/catalog/active-overview regressions, then retain archived flags and separate active vs archive listings without changing manager hide/presence.
+- [X] T148 Write failing preview/confirmation/closed-set/graph/activity/alias/recovery tests, then implement bounded native RPC archive coordinator and durable same-scope retry/unarchive prestates. No direct native DB writes in application code.
+- [X] T149 Write failing CLI and Textual Pilot regressions, then add separate Archive / Archived / Unarchive actions, exact preview, closed assertion, partial/retry results and human explanations.
+- [X] T150 Update docs/validation, run full/Ruff/package/SC-002 gates, record self-review and publish/merge the authorized GitHub PR. Retain all existing native cleanup/Warp limits.

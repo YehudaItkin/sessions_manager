@@ -28,6 +28,8 @@ def session_payload(payload):
         raise Failure("catalog_record_invalid", 6) from None
 
 
+CATALOG_SCHEMA = 3
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS roots(root_id TEXT PRIMARY KEY, payload TEXT NOT NULL, as_of INTEGER, state TEXT);
 CREATE TABLE IF NOT EXISTS sessions(
@@ -74,11 +76,11 @@ class Catalog:
                 raise Failure("catalog_corrupt", 6)
             if (
                 int.from_bytes(header[68:72], "big") != 0x53455353
-                or int.from_bytes(header[60:64], "big") > 2
+                or int.from_bytes(header[60:64], "big") > CATALOG_SCHEMA
             ):
                 raise Failure("unsupported_catalog_schema", 4)
         self.connection = sqlite3.connect(self.path, timeout=5)
-        if self.connection.execute("PRAGMA user_version").fetchone()[0] > 2:
+        if self.connection.execute("PRAGMA user_version").fetchone()[0] > CATALOG_SCHEMA:
             self.connection.close()
             raise Failure("unsupported_catalog_schema", 4)
         if new:
@@ -110,7 +112,7 @@ class Catalog:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN payload TEXT")
             if "current_trash_id" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN current_trash_id TEXT")
-            db.execute("PRAGMA user_version=2")
+            db.execute(f"PRAGMA user_version={CATALOG_SCHEMA}")
 
     def _private_sidecars(self):
         for suffix in ("-wal", "-shm"):
@@ -174,11 +176,45 @@ class Catalog:
             diagnostics=[reason] if reason else [],
         )
         with self.writer() as db:
+            # Bind archive observations and publication under one SQLite writer
+            # transaction, including readers finishing in another CLI process.
+            db.execute("BEGIN IMMEDIATE")
+            evidence = {}
+            for row in db.execute(
+                "SELECT uid,payload FROM locations WHERE root_id=? AND payload IS NOT NULL",
+                (root.root_id,),
+            ):
+                record = json.loads(row["payload"])
+                if record["session"].get("extra", {}).get("native_archive_observed_at"):
+                    evidence[row["uid"]] = Session.from_dict(record["session"])
+            protected, reconciled = set(), []
+            for session in sessions:
+                old = evidence.get(session.session_uid)
+                if old:
+                    stamp = old.extra["native_archive_observed_at"]
+                    if scan is None or scan.started_at <= stamp:
+                        old._identity_root_ids = getattr(
+                            session, "_identity_root_ids", [root.root_id]
+                        )
+                        session = old
+                        protected.add(session.session_uid)
+                    else:
+                        session.extra["native_archive_observed_at"] = stamp
+                reconciled.append(session)
+            sessions = reconciled
+            publication_complete = complete and not protected
+            if protected:
+                reason = "native_archive_refresh_stale"
+                details.state = details.history = details.search = details.usage = "partial"
+                details.diagnostics.append(reason)
+            root._publication_reason = reason
             previous_root = db.execute(
                 "SELECT as_of FROM roots WHERE root_id=?", (root.root_id,)
             ).fetchone()
-            data_as_of = observed if complete else previous_root[0] if previous_root else None
-            root.health = "complete" if complete else "partial"
+            data_as_of = (
+                observed if publication_complete else previous_root[0] if previous_root else None
+            )
+            root.health = "complete" if publication_complete else "partial"
             root.last_scan_id = generation
             db.execute(
                 "INSERT INTO roots VALUES (?,?,?,?) ON CONFLICT(root_id) DO UPDATE SET payload=excluded.payload,as_of=excluded.as_of,state=excluded.state",
@@ -186,12 +222,18 @@ class Catalog:
                     root.root_id,
                     json.dumps(public(root)),
                     data_as_of,
-                    "complete" if complete else reason or "partial",
+                    "complete" if publication_complete else reason or "partial",
                 ),
             )
             db.execute(
                 "INSERT INTO generations(id,root_id,complete,as_of,payload) VALUES (?,?,?,?,?)",
-                (generation, root.root_id, complete, observed, json.dumps(public(details))),
+                (
+                    generation,
+                    root.root_id,
+                    publication_complete,
+                    observed,
+                    json.dumps(public(details)),
+                ),
             )
             for session in sessions:
                 previous = db.execute(
@@ -211,22 +253,23 @@ class Catalog:
                             "stage": scan.stage if scan else "complete",
                         }
                     )
-                    if len(active_roots) > 1
+                    if len(active_roots) > 1 or session.extra.get("native_archive_observed_at")
                     else None
                 )
                 # Store per-location native evidence before applying aggregate guards.
                 # INSERT session first satisfies the existing location foreign key.
-                db.execute(
-                    "INSERT OR IGNORE INTO sessions(uid,namespace,native_id,payload,hidden,presence) VALUES (?,?,?,?,?,?)",
-                    (
-                        session.session_uid,
-                        session.namespace_id,
-                        session.native_id,
-                        json.dumps(public(session)),
-                        session.hidden,
-                        session.presence,
-                    ),
-                )
+                if not previous:
+                    db.execute(
+                        "INSERT OR IGNORE INTO sessions(uid,namespace,native_id,payload,hidden,presence) VALUES (?,?,?,?,?,?)",
+                        (
+                            session.session_uid,
+                            session.namespace_id,
+                            session.native_id,
+                            json.dumps(public(session)),
+                            session.hidden,
+                            session.presence,
+                        ),
+                    )
                 db.execute(
                     "INSERT INTO locations(uid,root_id,locator,generation,payload) VALUES (?,?,?,?,?) ON CONFLICT(uid,root_id,locator) DO UPDATE SET generation=excluded.generation,payload=excluded.payload",
                     (session.session_uid, root.root_id, session.locator, generation, native),
@@ -266,12 +309,17 @@ class Catalog:
                         (session.session_uid, session.session_uid),
                     )
                     db.execute("DELETE FROM usage_snapshots WHERE uid=?", (session.session_uid,))
-                if histories and session.session_uid in histories:
+                if (
+                    histories
+                    and session.session_uid in histories
+                    and session.session_uid not in protected
+                ):
                     self._replace_history(db, session, histories[session.session_uid])
             if usages:
                 for session in sessions:
                     if (
                         session.session_uid in usages
+                        and session.session_uid not in protected
                         and (chosen := self.get(session.session_uid)).root_id == root.root_id
                         and chosen.extra.get("identity_conflict") != "identity_conflict"
                     ):
@@ -306,7 +354,7 @@ class Catalog:
                 if owner is None:
                     parent = owners.get(str(Path(path).parent))
                     owner = parent if parent is not None and parent.provider == "grok" else None
-                if owner:
+                if owner and owner.session_uid not in protected:
                     db.execute(
                         "INSERT OR REPLACE INTO jsonl_cursors VALUES (?,?,?,?)",
                         (root.root_id, path, owner.session_uid, checkpoint),
@@ -370,7 +418,7 @@ class Catalog:
         if pending or conflict:
             reason = "identity_conflict" if conflict else "identity_binding_unverified"
             chosen.extra["identity_conflict"] = reason
-            for name in ("resume", "cleanup"):
+            for name in ("resume", "cleanup", "archive", "unarchive"):
                 chosen.capabilities[name] = Capability("unsafe", reason)
             for name in ("history", "search", "usage"):
                 if conflict:
@@ -388,9 +436,10 @@ class Catalog:
                 db.execute("DELETE FROM event_memberships WHERE uid=?", (chosen.session_uid,))
                 db.execute("DELETE FROM chunks WHERE uid=?", (chosen.session_uid,))
         else:
-            chosen.capabilities["cleanup"] = Capability(
-                "unavailable", "multiple_locations_unverified"
-            )
+            for name in ("cleanup", "archive", "unarchive"):
+                chosen.capabilities[name] = Capability(
+                    "unavailable", "multiple_locations_unverified"
+                )
             chosen.extra["alias_bindings"] = [
                 {
                     "root": json.loads(
@@ -428,7 +477,7 @@ class Catalog:
     def sessions(self, *, include_missing=False):
         sql = "SELECT payload,hidden,presence FROM sessions"
         if not include_missing:
-            sql += " WHERE presence IN ('present','source_unavailable')"
+            sql += " WHERE presence IN ('present','source_unavailable') AND COALESCE(json_extract(payload,'$.extra.archived'),0)=0"
         result = []
         for row in self.connection.execute(sql):
             session = session_payload(row["payload"])

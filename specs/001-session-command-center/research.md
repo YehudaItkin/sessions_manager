@@ -355,3 +355,20 @@ Two new failing synthetic scope cases (home-level session_search.sqlite and orph
 grok.db-wal) were fixed; all 39 related Grok/Cursor/recovery checks passed.
 No personal history was deleted and no shared native database was modified.
 The independent Codex T118 native descendant/revision/recovery gate remains closed.
+
+
+## R16. Codex archive gate — 2026-11-05
+
+Installed codex-cli 0.166.0 archive and unarchive both cascade over spawned descendants.
+An initial native probe reproduced the loss of a previously archived child's flag after
+parent-only unarchive; unarchiving that now-active child again fails. Therefore unarchive
+must reconcile original flags in parent-before-child order, re-archiving prior archived
+children when required, rather than blindly unarchiving each member.
+
+`tests.support.verify_native_codex_archive` passed the native gate on a fresh offline
+CODEX_HOME: four native-created synthetic paginated histories; test-only spawn edges
+seeded after the native writer stops; native cascade, prior-child flag restoration,
+restart, identical history/IDs and untouched neighbor. Fixture graph seeding is explicit
+construction, never a production cleanup primitive. No user store/credential or external
+AI call. Production changes only through native archive/unarchive RPC; trash/permanent
+delete T118 remains gated. Official method behavior: https://learn.chatgpt.com/docs/app-server#archive-a-thread.

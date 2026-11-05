@@ -818,3 +818,63 @@ def stats_command(
         )
     finally:
         catalog.close()
+
+
+def archive_service(options):
+    from .native_archive import ArchiveService
+
+    cfg, catalog = runtime(options, providers=["codex"])
+    return ArchiveService(cfg, catalog)
+
+
+def native_archive_action(ctx, action, selector, confirm, assert_closed):
+    service = archive_service(ctx.obj)
+    try:
+        if not confirm:
+            emit(ctx.obj, envelope("native_archive_plan", service.preview(action, selector)))
+        else:
+            result = service.commit(action, selector, confirm, assert_closed=assert_closed)
+            emit(ctx.obj, envelope("native_archive_result", result))
+            if result["state"] != "complete":
+                raise typer.Exit(3)
+    finally:
+        service.catalog.close()
+
+
+@app.command("archive")
+def archive_command(
+    ctx: typer.Context, session_id: str, confirm: str | None = None, assert_closed: bool = False
+):
+    """Preview/confirm native Codex archive; includes descendants, retains history."""
+    native_archive_action(ctx, "archive", session_id, confirm, assert_closed)
+
+
+@app.command("unarchive")
+def unarchive_command(
+    ctx: typer.Context, session_id: str, confirm: str | None = None, assert_closed: bool = False
+):
+    """Preview/confirm restoration of native Codex archived flags."""
+    native_archive_action(ctx, "unarchive", session_id, confirm, assert_closed)
+
+
+@app.command("archives")
+def archives_command(ctx: typer.Context):
+    """List cached native Codex archives and operation recovery state."""
+    service = archive_service(ctx.obj)
+    try:
+        emit(ctx.obj, envelope("native_archives", service.list()))
+    finally:
+        service.catalog.close()
+
+
+@app.command("archive-retry")
+def archive_retry_command(ctx: typer.Context, operation_id: str, assert_closed: bool = False):
+    """Reconcile the same confirmed native archive operation after interruption."""
+    service = archive_service(ctx.obj)
+    try:
+        result = service.retry(operation_id, assert_closed=assert_closed)
+        emit(ctx.obj, envelope("native_archive_result", result))
+        if result["state"] != "complete":
+            raise typer.Exit(3)
+    finally:
+        service.catalog.close()
