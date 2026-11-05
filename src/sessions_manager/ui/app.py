@@ -40,6 +40,7 @@ class SessionsApp(App):
         self.scanning = False
         self.query = ""
         self.scope = "visible"
+        self.stats_scope = "all"
         self.batch_selection = set()
 
     def compose(self) -> ComposeResult:
@@ -90,16 +91,20 @@ class SessionsApp(App):
         all_sessions = self.catalog.sessions(include_missing=True)
         handles = short_handles(all_sessions)
         spec = QuerySpec(query=self.query, scope=self.scope, **self.filters)
-        rows = spec.filter(self.catalog.sessions(), self.catalog)
+        rows = spec.filter(
+            [s for s in all_sessions if s.presence in ("present", "source_unavailable")],
+            self.catalog,
+        )
         self.batch_selection.intersection_update(s.session_uid for s in rows)
         self.query_one("#selection-summary", Static).update(safe_text(spec.describe()))
         for s in rows:
+            match = self.catalog.match_context(s.session_uid, self.query) if self.query else None
+            preview = f"{match['field']}: {match['text']}" if match else s.title or s.preview
             table.add_row(
                 handles[s.session_uid],
                 Text(safe_text(s.native_id), overflow="ellipsis", no_wrap=True),
                 s.provider,
-                ("* " if s.session_uid in self.batch_selection else "")
-                + safe_text(s.title or s.preview or ""),
+                Text(("* " if s.session_uid in self.batch_selection else "") + safe_text(preview)),
                 safe_text(s.cwd),
                 display_time(s.created_at),
                 display_time(s.last_activity_at),
@@ -156,23 +161,28 @@ class SessionsApp(App):
 
     async def refresh_catalog(self):
         import asyncio
+        import threading
 
-        from ..discovery import collect_scan, prepare_scan, publish_scan
+        from ..discovery import iter_scan, prepare_scan, publish_scan
 
         self.scanning = True
+        cancel = threading.Event()
         self.query_one("#status", Static).update("Scanning configured source roots…")
         try:
             roots, arguments = prepare_scan(
                 self.config, self.catalog, self.filters.get("providers")
             )
-            results = await asyncio.to_thread(collect_scan, arguments)
+            stream = iter_scan(arguments, cancel)
             self.source_status = []
-            for root, result in zip(roots, results, strict=True):
+            while (scanned := await asyncio.to_thread(next, stream, None)) is not None:
+                index, result = scanned
+                root = roots[index]
                 self.query_one("#status", Static).update(f"Indexing {root.provider}…")
-                await asyncio.sleep(0)
                 self.source_status.append(publish_scan(self.catalog, root, result))
-            self.reload_rows()
+                self.reload_rows()
+                await asyncio.sleep(0)
         finally:
+            cancel.set()
             self.scanning = False
 
     def action_details(self):
@@ -344,9 +354,13 @@ class SessionsApp(App):
         from ..search import QuerySpec
         from .screens import StatisticsScreen
 
-        rows = QuerySpec(scope="all", query=self.query, **self.filters).filter(
-            self.catalog.sessions(), self.catalog
+        spec = QuerySpec(scope=self.stats_scope, query=self.query, **self.filters)
+        self.push_screen(
+            StatisticsScreen(
+                self.catalog,
+                self.catalog.sessions(),
+                spec=spec,
+                session_ids=sorted(self.batch_selection) or None,
+                scope_changed=lambda scope: setattr(self, "stats_scope", scope),
+            )
         )
-        if self.batch_selection:
-            rows = [s for s in rows if s.session_uid in self.batch_selection]
-        self.push_screen(StatisticsScreen(self.catalog, rows))

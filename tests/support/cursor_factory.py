@@ -19,7 +19,7 @@ def wire(field, value):
     return varint((field << 3) | 2) + varint(len(value)) + value
 
 
-def make(root, native="cursor-one", cwd=None, text="Synthetic Cursor question"):
+def make(root, native="cursor-one", cwd=None, text="Synthetic Cursor question", *, context=None):
     root = Path(root)
     cwd = str(cwd or root / "project")
     Path(cwd).mkdir(parents=True, exist_ok=True)
@@ -52,6 +52,13 @@ def make(root, native="cursor-one", cwd=None, text="Synthetic Cursor question"):
         "step": wire(1, wire(1, "Synthetic answer")),
         "orphan": wire(1, "Never visible orphan"),
     }
+    if context is not None:
+        details = b"".join(
+            varint(number << 3) + varint(value)
+            for number, value in enumerate(context, 1)
+            if value is not None
+        )
+        blobs["root"] += wire(5, details)
     with sqlite3.connect(path / "store.db") as db:
         db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY,data BLOB)")
         db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT)")

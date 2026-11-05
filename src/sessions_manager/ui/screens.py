@@ -373,13 +373,27 @@ class FiltersScreen(ModalScreen):
 class StatisticsScreen(ModalScreen):
     BINDINGS = [("escape", "close", "Close"), ("q", "close", "Close")]
 
-    def __init__(self, catalog, sessions):
+    def __init__(self, catalog, sessions, *, spec=None, session_ids=None, scope_changed=None):
         super().__init__()
         self.catalog, self.sessions = catalog, sessions
+        from ..search import QuerySpec
+
+        self.spec = spec or QuerySpec(scope="all")
+        self.session_ids, self.scope_changed = session_ids, scope_changed
 
     def compose(self):
         from textual.widgets import Select
 
+        yield Select(
+            [
+                ("All sessions (hidden included)", "all"),
+                ("Visible sessions", "visible"),
+                ("Hidden sessions", "hidden"),
+            ],
+            value=self.spec.scope,
+            allow_blank=False,
+            id="stats-scope",
+        )
         yield Select(
             [("Source", "source"), ("Project", "project"), ("Last activity day", "day")],
             value="source",
@@ -397,10 +411,22 @@ class StatisticsScreen(ModalScreen):
 
         from ..statistics import summarize
 
+        rows = self.spec.filter(self.sessions, self.catalog)
+        if self.session_ids is not None:
+            rows = [s for s in rows if s.session_uid in self.session_ids]
         self.query_one("#stats-content", Static).update(
             safe_text(
                 json.dumps(
-                    summarize(self.catalog, self.sessions, group_by=group),
+                    summarize(
+                        self.catalog,
+                        rows,
+                        group_by=group,
+                        selection=self.spec.selection(
+                            ["s-" + uid for uid in self.session_ids]
+                            if self.session_ids is not None
+                            else None
+                        ),
+                    ),
                     ensure_ascii=False,
                     indent=2,
                 )
@@ -410,6 +436,13 @@ class StatisticsScreen(ModalScreen):
     def on_select_changed(self, event):
         if event.select.id == "stats-group" and event.value in ("source", "project", "day"):
             self.render_statistics(event.value)
+        elif event.select.id == "stats-scope" and event.value in ("all", "visible", "hidden"):
+            from textual.widgets import Select
+
+            self.spec.scope = event.value
+            if self.scope_changed:
+                self.scope_changed(event.value)
+            self.render_statistics(self.query_one("#stats-group", Select).value)
 
     def on_button_pressed(self, event):
         self.action_close()

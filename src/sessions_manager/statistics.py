@@ -104,7 +104,7 @@ def _other_metrics(catalog, sessions):
             ids,
         ):
             event = json.loads(unpack(row["payload"]))
-            events.setdefault(event["role"], set()).add(row["event_uid"])
+            events.setdefault(event["role"], set()).add(event["event_uid"])
     messages = events.get("user", set()) | events.get("assistant", set())
     tools = events.get("tool_call", set()) | events.get("tool_result", set())
     history_known = sum(s.history_state == "complete" for s in sessions)
@@ -149,7 +149,7 @@ def _other_metrics(catalog, sessions):
     }
 
 
-def summarize(catalog, sessions, *, group_by=None):
+def summarize(catalog, sessions, *, group_by=None, selection=None):
     if group_by not in (None, "source", "project", "day"):
         raise Failure("invalid_group_by", 2)
     facts, members, snapshots = catalog.usage([s.session_uid for s in sessions])
@@ -208,6 +208,34 @@ def summarize(catalog, sessions, *, group_by=None):
             contexts.extend(json.loads(row[0]))
     return {
         "scope": "selected_session_lifetimes",
+        "selection": selection
+        if selection is not None
+        else {"session_ids": [s.display_id for s in sessions], "scope": "explicit_sessions"},
+        "activity_range": {
+            "started_at": min(
+                (
+                    s.created_at
+                    for s in sessions
+                    if s.created_at is not None and s.timezone_confidence == "known"
+                ),
+                default=None,
+            ),
+            "last_activity_at": max(
+                (
+                    s.last_activity_at
+                    for s in sessions
+                    if s.last_activity_at is not None and s.timezone_confidence == "known"
+                ),
+                default=None,
+            ),
+            "complete": all(
+                s.created_at is not None
+                and s.last_activity_at is not None
+                and s.timezone_confidence == "known"
+                for s in sessions
+            ),
+            "time_zone": "UTC",
+        },
         "accounting_mode": "unique_fact_union",
         "period_semantics": "sessions_selected_by_last_activity",
         "time_zone": str(local_zone()),

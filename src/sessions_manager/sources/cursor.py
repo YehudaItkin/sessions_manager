@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from ..models import Capability, Failure, Session, timestamp
-from .base import ScanResult, directory_inventory, json_file, read_many, resume_context_verified
+from .base import ScanResult, directory_inventory, json_file, read_many, resume_capability
 from .sqlite_reader import NativeSQLite
 
 
@@ -64,11 +64,12 @@ class Adapter:
 
                 if not hasattr(self, "_history"):
                     self._history = {}
-                self._history[native_meta.get("agentId")] = graph(
-                    native_meta.get("latestRootBlobId"),
-                    load,
-                    self.root.namespace_id + ":" + str(native_meta.get("agentId")),
-                )
+                if not getattr(self, "metadata_only", False):
+                    self._history[native_meta.get("agentId")] = graph(
+                        native_meta.get("latestRootBlobId"),
+                        load,
+                        self.root.namespace_id + ":" + str(native_meta.get("agentId")),
+                    )
             native = native_meta.get("agentId")
             if not isinstance(native, str) or native != store.parent.name:
                 raise Failure("unsupported_native_schema", 3)
@@ -97,8 +98,7 @@ class Adapter:
             )
             session.capabilities["metadata"] = Capability("supported")
             session.capabilities["usage"] = Capability("unavailable", "not_recorded")
-            if resume_context_verified(self.root):
-                session.capabilities["resume"] = Capability("supported")
+            session.capabilities["resume"] = resume_capability(self.root)
             return session
         except (Failure, OSError, ValueError, TypeError, KeyError, AttributeError):
             return None
@@ -134,6 +134,34 @@ class Adapter:
         return prepare_cleanup_bundle(self.root, session)
 
     def read_usage(self, session):
-        from ..models import UsageResult
+        from ..models import ContextMetric, UsageResult
+        from .cursor_wire import context_details
 
-        return UsageResult(state="unavailable", reason="not_recorded")
+        result = UsageResult(state="unavailable", reason="not_recorded")
+        if session.profile != self.profile:
+            return result
+        root_id = session.extra.get("latest_root")
+        try:
+            with NativeSQLite(
+                Path(session.locator) / "store.db", {"blobs": {"id", "data"}}
+            ) as reader:
+                rows = reader.read("blobs", ["data"], key="id", value=root_id)
+                if not rows:
+                    return result
+                values = context_details(rows[0]["data"])
+                if values is not None:
+                    result.context_metrics = [
+                        ContextMetric(
+                            session.session_uid,
+                            *values,
+                            source_profile=self.profile,
+                            native_revision={
+                                "root_blob_id": root_id,
+                                "source_fingerprint": session.fingerprint,
+                            },
+                            completeness="partial" if None in values else "complete",
+                        )
+                    ]
+        except (Failure, OSError, ValueError, TypeError):
+            result.reason = "cursor_context_unavailable"
+        return result

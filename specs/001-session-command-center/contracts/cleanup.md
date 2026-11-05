@@ -139,3 +139,22 @@ entries доступны для restore, непройденные остаютс
 - purge не может выйти за entry directory или удалить native/cloud историю.
 
 Исследование формата не является прохождением этих тестов.
+
+
+## Convergence confirmation and feasibility amendment — 2026-11-05
+
+Before the first native rename, re-discover and compare the complete confirmed
+bundle/profile/artifact set, including newly appearing companions. Confirmed
+restore/purge entry digest and state must match before starting a new operation;
+a stale confirmation requires a new preview. An operation already in progress
+reconciles its own durable journal/verified payload rather than treating its
+intentional partial relocation as a newly discovered bundle.
+
+Purge of a trashed cached session also removes its whitelisted JSONL parser
+checkpoint, leaving neighbors and restored live histories intact.
+Grok shared-index feasibility is concluded as unavailable for the current
+profile: no verified native revision-bound local reversible primitive exists.
+Known shared DB/WAL/SHM paths are guarded in home/sessions/workspace layouts.
+The standalone local bundle profile retains crash/retry/restore support.
+Native permanent/remote delete, direct shared DB mutation and whole-DB rollback
+remain excluded; Codex native descendant/revision/recovery gate is unchanged.

@@ -9,6 +9,28 @@ from tests.support import claude_factory, codex_factory, cursor_factory, grok_fa
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "grok", "cursor"])
+@pytest.mark.parametrize("missing", [True, False])
+def test_missing_or_nonexecutable_cli_is_view_only(tmp_path, fake_executable, provider, missing):
+    factory = {
+        "codex": codex_factory,
+        "claude": claude_factory,
+        "grok": grok_factory,
+        "cursor": cursor_factory,
+    }[provider]
+    factory.make(tmp_path / "native")
+    if missing:
+        fake_executable.unlink()
+    else:
+        fake_executable.chmod(0o600)
+    root = SourceRoot.create(
+        provider, tmp_path / "native", resume_context="native", executable_path=fake_executable
+    )
+    session = adapter(root).discover().sessions[0]
+    assert session.capabilities["metadata"].state == "supported"
+    assert session.capabilities["resume"].state == "unavailable"
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude", "grok", "cursor"])
 def test_exact_argv_and_independent_history_binding(tmp_path, fake_executable, provider):
     native = tmp_path / provider
     cwd = tmp_path / "original"

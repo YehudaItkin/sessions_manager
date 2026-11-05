@@ -9,6 +9,35 @@ from tests.support.claude_factory import make
 
 
 @pytest.mark.asyncio
+async def test_search_row_displays_history_match_without_replacing_preview(isolated, tmp_path):
+    from tests.support.claude_factory import append
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    path = make(root.path, text="unrelated preview")
+    append(
+        path,
+        {
+            "type": "user",
+            "uuid": "late",
+            "sessionId": "claude-one",
+            "message": {"content": "x" * 300 + " Straße [red] literal"},
+        },
+    )
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        app = SessionsApp(cfg, catalog)
+        async with app.run_test():
+            app.query = "STRASSE"
+            app.reload_rows()
+            cell = app.query_one("#sessions").get_cell(app.selected_uid(), "title")
+            assert "Straße" in str(cell)
+            assert catalog.get(app.selected_uid()).preview == "unrelated preview"
+
+
+@pytest.mark.asyncio
 async def test_history_screen_literal(isolated, tmp_path):
     config, data = isolated
     root = SourceRoot.create("claude", tmp_path / "native")

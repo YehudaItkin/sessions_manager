@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import sqlite3
@@ -18,6 +19,13 @@ from .models import Failure, Session, now_ms, public
 
 def unpack(value):
     return zlib.decompress(value).decode() if isinstance(value, bytes) else value
+
+
+def session_payload(payload):
+    try:
+        return Session.from_dict(json.loads(payload))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise Failure("catalog_record_invalid", 6) from None
 
 
 SCHEMA = """
@@ -81,6 +89,9 @@ class Catalog:
         self.path.chmod(0o600)
         self.connection.row_factory = sqlite3.Row
         self.connection.create_function("unpack", 1, unpack, deterministic=True)
+        self.connection.create_function(
+            "casefold", 1, lambda value: (value or "").casefold(), deterministic=True
+        )
         self.connection.execute("PRAGMA foreign_keys=ON")
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.execute("PRAGMA cache_size=-65536")
@@ -90,6 +101,14 @@ class Catalog:
         self._private_sidecars()
         self._history_schema()
         self._usage_schema()
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS jsonl_cursors(root_id TEXT,path TEXT,uid TEXT REFERENCES sessions(uid),payload BLOB,PRIMARY KEY(root_id,path))"
+        )
+        if "payload" not in {
+            r[1] for r in self.connection.execute("PRAGMA table_info(generations)")
+        }:
+            self.connection.execute("ALTER TABLE generations ADD COLUMN payload TEXT")
+            self.connection.commit()
 
     def _private_sidecars(self):
         for suffix in ("-wal", "-shm"):
@@ -114,8 +133,44 @@ class Catalog:
         finally:
             connection.close()
 
-    def publish(self, root, sessions, *, complete, reason=None, histories=None, usages=None):
+    def publish(
+        self,
+        root,
+        sessions,
+        *,
+        complete,
+        reason=None,
+        histories=None,
+        usages=None,
+        scan=None,
+        cursors=None,
+    ):
         generation, observed = str(uuid.uuid4()), now_ms()
+        if scan is not None and scan.finished_at is not None:
+            observed = scan.finished_at
+        from .models import ScanGeneration
+
+        phase_states = {
+            field: ("complete" if complete else "unavailable")
+            if not sessions
+            else "complete"
+            if all(getattr(s, field) == "complete" for s in sessions)
+            else "partial"
+            for field in ("history_state", "search_state", "usage_state")
+        }
+        details = ScanGeneration(
+            generation,
+            root.root_id,
+            state="complete" if complete else "partial",
+            started_at=scan.started_at if scan else observed,
+            finished_at=(scan.finished_at or observed) if scan else observed,
+            enumeration="partial" if not complete else "complete",
+            history=phase_states["history_state"],
+            search=phase_states["search_state"],
+            usage=phase_states["usage_state"],
+            source_revision_range=scan.source_revision_range if scan else [],
+            diagnostics=[reason] if reason else [],
+        )
         with self.writer() as db:
             previous_root = db.execute(
                 "SELECT as_of FROM roots WHERE root_id=?", (root.root_id,)
@@ -133,8 +188,8 @@ class Catalog:
                 ),
             )
             db.execute(
-                "INSERT INTO generations VALUES (?,?,?,?)",
-                (generation, root.root_id, complete, observed),
+                "INSERT INTO generations(id,root_id,complete,as_of,payload) VALUES (?,?,?,?,?)",
+                (generation, root.root_id, complete, observed, json.dumps(public(details))),
             )
             for session in sessions:
                 previous = db.execute(
@@ -142,7 +197,7 @@ class Catalog:
                     (session.session_uid,),
                 ).fetchone()
                 if previous:
-                    old = Session.from_dict(json.loads(previous["payload"]))
+                    old = session_payload(previous["payload"])
                     active_roots = getattr(session, "_identity_root_ids", [root.root_id])
                     signatures = {
                         key: value
@@ -221,6 +276,17 @@ class Catalog:
                 db.execute(
                     "UPDATE sessions SET presence='missing' WHERE presence IN ('present','source_unavailable','missing') AND uid NOT IN (SELECT uid FROM locations)"
                 )
+            owners = {s.locator: s for s in sessions} if cursors else {}
+            for path, checkpoint in (cursors or {}).items():
+                owner = owners.get(path)
+                if owner is None:
+                    parent = owners.get(str(Path(path).parent))
+                    owner = parent if parent is not None and parent.provider == "grok" else None
+                if owner:
+                    db.execute(
+                        "INSERT OR REPLACE INTO jsonl_cursors VALUES (?,?,?,?)",
+                        (root.root_id, path, owner.session_uid, checkpoint),
+                    )
         return generation
 
     def sessions(self, *, include_missing=False):
@@ -229,7 +295,7 @@ class Catalog:
             sql += " WHERE presence IN ('present','source_unavailable')"
         result = []
         for row in self.connection.execute(sql):
-            session = Session.from_dict(json.loads(row["payload"]))
+            session = session_payload(row["payload"])
             session.hidden, session.presence = bool(row["hidden"]), row["presence"]
             result.append(session)
         return result
@@ -242,7 +308,7 @@ class Catalog:
         )
         matches = []
         for row in rows:
-            session = Session.from_dict(json.loads(row["payload"]))
+            session = session_payload(row["payload"])
             session.hidden, session.presence = bool(row["hidden"]), row["presence"]
             if session.display_id.startswith(selector) or session.session_uid == selector:
                 matches.append(session)
@@ -282,6 +348,7 @@ class Catalog:
         self.connection.executescript("""
         CREATE TABLE IF NOT EXISTS events(event_uid TEXT PRIMARY KEY,payload TEXT NOT NULL,body BLOB);
         CREATE TABLE IF NOT EXISTS event_memberships(uid TEXT REFERENCES sessions(uid), event_uid TEXT REFERENCES events(event_uid), ordinal INTEGER,context TEXT, PRIMARY KEY(uid,event_uid));
+        CREATE INDEX IF NOT EXISTS membership_event ON event_memberships(event_uid);
         CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY,uid TEXT REFERENCES sessions(uid),field_kind TEXT,folded_text TEXT NOT NULL,candidate_text TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS chunks_session ON chunks(uid);
         CREATE VIEW IF NOT EXISTS history_search_content AS SELECT id,candidate_text FROM chunks WHERE field_kind IN ('user','assistant','tool_call','tool_result','system','unsupported');
@@ -301,6 +368,10 @@ class Catalog:
         event_columns = {r[1] for r in self.connection.execute("PRAGMA table_info(events)")}
         if "body" not in event_columns:
             self.connection.execute("ALTER TABLE events ADD COLUMN body BLOB")
+        if "logical_uid" not in event_columns:
+            self.connection.execute("ALTER TABLE events ADD COLUMN logical_uid TEXT")
+            self.connection.execute("UPDATE events SET logical_uid=event_uid")
+        self.connection.execute("CREATE INDEX IF NOT EXISTS event_identity ON events(logical_uid)")
         from .models import NORMALIZER_VERSION
 
         old = self.connection.execute(
@@ -328,6 +399,8 @@ class Catalog:
             self._replace_history(db, session, result)
 
     def _replace_history(self, db, session, result):
+        from .models import identity
+
         db.execute("DELETE FROM event_memberships WHERE uid=?", (session.session_uid,))
         db.execute("DELETE FROM chunks WHERE uid=?", (session.session_uid,))
         for event in result.events:
@@ -336,25 +409,49 @@ class Catalog:
             body = getattr(event, "_compressed_body", None)
             if body is None and event.text is not None:
                 body = zlib.compress(event.text.encode(), 1)
+            # Logical native identity and observed content revision are separate.
+            # Refreshing one fork/copy must never rewrite another one's snapshot.
+            stored_uid = identity(
+                "event-revision",
+                event.event_uid,
+                event.role,
+                hashlib.sha256(body or b"").hexdigest(),
+            )
+            conflicts = {
+                row[0]
+                for row in db.execute(
+                    "SELECT DISTINCT m.uid FROM events e JOIN event_memberships m USING(event_uid) WHERE e.logical_uid=? AND (e.body IS NOT ? OR json_extract(unpack(e.payload),'$.role')<>?)",
+                    (event.event_uid, body, event.role),
+                )
+            }
+            if conflicts:
+                conflicts.add(session.session_uid)
+                session.history_state = session.search_state = "partial"
+                for uid in conflicts:
+                    db.execute(
+                        "UPDATE sessions SET payload=json_set(payload,'$.history_state','partial','$.search_state','partial','$.extra.history_conflict','shared_event_revision_conflict') WHERE uid=?",
+                        (uid,),
+                    )
             db.execute(
-                "INSERT INTO events(event_uid,payload,body) VALUES (?,?,?) ON CONFLICT(event_uid) DO UPDATE SET payload=excluded.payload,body=excluded.body",
+                "INSERT INTO events(event_uid,payload,body,logical_uid) VALUES (?,?,?,?) ON CONFLICT(event_uid) DO NOTHING",
                 (
-                    event.event_uid,
+                    stored_uid,
                     zlib.compress(json.dumps(payload, ensure_ascii=False).encode(), 1),
                     body,
+                    event.event_uid,
                 ),
             )
             db.execute(
                 "INSERT OR REPLACE INTO event_memberships(uid,event_uid,ordinal,context) VALUES (?,?,?,?)",
                 (
                     session.session_uid,
-                    event.event_uid,
+                    stored_uid,
                     event.ordinal,
                     json.dumps(
                         {
-                            "parent_id": event.parent_id,
-                            "turn_id": event.turn_id,
-                            "payload": event.payload,
+                            key: value
+                            for key, value in payload.items()
+                            if key not in ("event_uid", "role", "ordinal", "text")
                         }
                     ),
                 ),
@@ -387,6 +484,30 @@ class Catalog:
                 value["text"] = unpack(row[1])
             result.append(value)
         return result
+
+    def match_context(self, uid, query):
+        from .search import literal_context
+
+        if not query:
+            return None
+        row = self.connection.execute(
+            "SELECT e.payload,e.body,m.ordinal FROM event_memberships m JOIN events e USING(event_uid) WHERE m.uid=? AND instr(casefold(unpack(e.body)),?)>0 ORDER BY m.ordinal,e.event_uid LIMIT 1",
+            (uid, query.casefold()),
+        ).fetchone()
+        if row:
+            event = json.loads(unpack(row[0]))
+            return {
+                "field": event["role"],
+                "event_uid": event["event_uid"],
+                "ordinal": row[2],
+                "text": literal_context(unpack(row[1]), query),
+            }
+        session = self.get(uid)
+        for field in ("title", "preview", "cwd", "native_id", "display_id"):
+            text = getattr(session, field)
+            if text and query.casefold() in text.casefold():
+                return {"field": field, "text": literal_context(text, query)}
+        return None
 
     def matching_ids(self, query):
         folded = query.casefold()

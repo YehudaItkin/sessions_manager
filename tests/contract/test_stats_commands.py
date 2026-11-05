@@ -27,3 +27,7 @@ def test_stats_default_hidden_included_and_session_filter(isolated, tmp_path):
     assert data["metrics"]["total_tokens"]["value"] == 20
     assert data["metrics"]["messages"]["value"] == 2
     assert data["coverage"]["selected_sessions"] == 1
+    assert data["selection"]["scope"] == "all"
+    assert data["selection"]["session_ids"] == [uid]
+    assert data["activity_range"]["started_at"] == 1767225600000
+    assert data["activity_range"]["last_activity_at"] == 1767225601000

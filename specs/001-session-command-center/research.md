@@ -311,3 +311,47 @@ and TOML agrees with the [documented schema](https://docs.warp.dev/terminal/wind
 The cause inside Warp is unverified; a version/feature mismatch is only a hypothesis.
 Computer Use denied access to Warp, and no alternate UI automation was used. The manager
 retains delivered != loaded and now displays an actionable Current terminal alternative.
+
+
+## R15. Convergence compatibility proof — 2026-11-05
+
+### Cursor context occupancy (T138)
+
+The installed Cursor CLI 2026.10.22-27dcf5f `index.js` descriptor in the same
+agent conversation namespace maps ConversationStateStructure field 5 to
+ConversationTokenDetails; its fields 1/2 are uint32 used_tokens/max_tokens.
+The corresponding 8008.index.js UI reads conversationStateStructure.tokenDetails
+and labels these values as context occupancy. Inspection was text-only: no vendor
+module was imported/executed, no personal chat or encryption key was copied.
+Synthetic protobuf fixtures prove known zero, missing counters and malformed wire
+handling. Explicitly absent fields remain null instead of inventing proto defaults.
+These counters do not prove lifetime billing/input/output/total usage.
+
+### Grok shared-index feasibility (T117/T139)
+
+Installed Grok 1.0.70 `sessions delete --help` describes permanent history deletion
+and offers no local-only, expected-revision, inverse/restore or recoverable-trash
+flags. The [native persistence source](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/persistence.rs)
+corroborates the boundary: delete_session_history can remove a remote copy first,
+removes local files, then evicts a shared search entry and queues an indexer
+notification. It exposes no revision-bound atomic reversible operation spanning
+files and index entries. This source commit is supporting evidence, not proof that
+every internal detail matches the installed build.
+
+| Candidate | Decision / recovery boundary |
+| --- | --- |
+| Proven session-owned files, no shared dependencies | Existing exact backup/no-replace/journal profile; synthetic crash/retry/restore preserves neighbors. |
+| Move files while leaving shared index | Reject: a second native history copy remains. |
+| Move/restore a whole shared DB or its WAL/SHM | Reject: affects neighbors and later native work. |
+| Direct DML/FTS surgery | Excluded by the feature contract; no verified native inverse/revision protocol. |
+| Invoke native permanent delete | Reject as manager trash: no verified local-only reversible scope. |
+
+Conclusion: shared-index cleanup is unavailable for this compatibility profile.
+A future profile needs a proven native primitive that binds exact session/index
+closure and expected revisions, excludes remote effects, and supports coherent
+recovery without replacing neighboring state. Current guards include known DB,
+WAL and SHM paths in native home, sessions root and workspace layouts.
+Two new failing synthetic scope cases (home-level session_search.sqlite and orphan
+grok.db-wal) were fixed; all 39 related Grok/Cursor/recovery checks passed.
+No personal history was deleted and no shared native database was modified.
+The independent Codex T118 native descendant/revision/recovery gate remains closed.

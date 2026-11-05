@@ -278,6 +278,11 @@ class CleanupService:
             raise Failure("closed_assertion_required", 7)
         if row["operation_id"]:
             return row["operation_id"], targets
+        if action in ("restore", "purge"):
+            for target in targets:
+                entry, _ = self._entry(target["target_id"])
+                if digest(json.dumps(entry, sort_keys=True).encode()) != target["entry_digest"]:
+                    raise Failure("confirmation_stale", 7)
         operation_id = str(uuid.uuid4())
         with self.catalog.writer() as db:
             db.execute(
@@ -348,7 +353,24 @@ class CleanupService:
             self._save_item(op, item, db=db)
         return public(entry), directory
 
+    def _assert_current_bundle(self, target):
+        current = self._snapshot(self.catalog.get(target["target_id"]))
+        fields = ("session_uid", "provider", "native_id", "profile", "artifacts")
+        root_fields = ("root_id", "namespace_id", "path", "executable_path", "executable_version")
+        if any(current.get(key) != target.get(key) for key in fields) or any(
+            current["root"].get(key) != target["root"].get(key) for key in root_fields
+        ):
+            raise Failure("source_changed", 5)
+
     def _trash(self, op, target, item):
+        # Once a rename occurred the original bundle is intentionally incomplete;
+        # retries must reconcile its verified journal/payload rather than rediscover it.
+        moved_before = False
+        if item["trash_id"]:
+            payload = self.config.data_dir / "trash" / item["trash_id"] / "payload"
+            moved_before = payload.exists() and any(payload.iterdir())
+        if not moved_before:
+            self._assert_current_bundle(target)
         entry, directory = self._begin_entry(op, target, item)
         artifacts = entry["artifacts"]
         payload = directory / "payload"
@@ -405,7 +427,10 @@ class CleanupService:
                 raise Failure("source_changed", 5)
             self._entry_state(entry["trash_id"], "removing")
             self._checkpoint("before_rename", item["target_id"])
+            if not moved_before:
+                self._assert_current_bundle(target)
             fsops.move_noreplace(source, destination)
+            moved_before = True
             self._checkpoint("after_rename", item["target_id"])
             item["state"] = "removing"
             item.setdefault("moved_artifacts", []).append(index)
@@ -516,6 +541,7 @@ class CleanupService:
                     (json.dumps(public(session)), uid),
                 )
                 db.execute("DELETE FROM chunks WHERE uid=?", (uid,))
+                db.execute("DELETE FROM jsonl_cursors WHERE uid=?", (uid,))
                 db.execute("DELETE FROM event_memberships WHERE uid=?", (uid,))
                 db.execute(
                     "DELETE FROM events WHERE event_uid NOT IN (SELECT event_uid FROM event_memberships)"

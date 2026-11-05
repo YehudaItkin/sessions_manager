@@ -3,9 +3,9 @@
 import importlib
 import multiprocessing
 import sqlite3
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 
-from .models import Failure
+from .models import Capability, Failure, now_ms
 from .sources.base import ScanResult
 
 READ_ERRORS = (OSError, Failure, ValueError, TypeError, KeyError, AttributeError, sqlite3.Error)
@@ -15,12 +15,41 @@ def adapter(root):
     return importlib.import_module("sessions_manager.sources." + root.provider).Adapter(root)
 
 
-def scan_root(argument):
+def scan_metadata(argument):
     root, cached = argument
+    started = now_ms()
     try:
         if cached and not root.path.exists():
             return ScanResult(complete=False, reason="source_unavailable")
         reader = adapter(root)
+        reader.metadata_only = True
+        result = reader.discover()
+        for session in result.sessions:
+            session.history_state = session.search_state = session.usage_state = "partial"
+            for name in ("history", "search", "usage", "resume", "cleanup"):
+                session.capabilities[name] = Capability("unavailable", "scan_pending")
+        result.stage = "metadata"
+        result.complete = False
+        result.reason = "scan_pending"
+        return result
+    except READ_ERRORS:
+        return ScanResult(complete=False, reason="source_unavailable", stage="metadata")
+    finally:
+        # Both successful and failed phases carry actual reader time bounds.
+        if "result" in locals():
+            result.started_at, result.finished_at = started, now_ms()
+
+
+def scan_root(argument):
+    root, cached = argument
+    started = now_ms()
+    try:
+        if cached and not root.path.exists():
+            return ScanResult(complete=False, reason="source_unavailable")
+        reader = adapter(root)
+        from .sources.jsonl_cursor import JSONLCursor
+
+        reader.jsonl_cache = JSONLCursor(getattr(root, "_jsonl_cursors", {}))
         result = reader.discover()
         from .activity import observe
 
@@ -73,7 +102,7 @@ def scan_root(argument):
                         checksum.update((event.text or "").encode())
                     session.extra["identity_digest"] = checksum.hexdigest()
             session.extra["normalizer_version"] = NORMALIZER_VERSION
-            if unchanged and old.extra.get("usage_version") == "3" and old.usage_state != "partial":
+            if unchanged and old.extra.get("usage_version") == "4" and old.usage_state != "partial":
                 session.usage_state = old.usage_state
                 session.capabilities["usage"] = old.capabilities["usage"]
             else:
@@ -89,7 +118,7 @@ def scan_root(argument):
                         usage.reason,
                     )
                     result.usages[session.session_uid] = usage
-            session.extra["usage_version"] = "3"
+            session.extra["usage_version"] = "4"
             try:
                 prepare_cleanup_bundle(root, session, common_checks=cleanup_checks)
                 session.capabilities["cleanup"] = Capability("supported")
@@ -98,6 +127,16 @@ def scan_root(argument):
                     "unavailable",
                     failure.code if isinstance(failure, Failure) else "cleanup_read_failed",
                 )
+        result.started_at, result.finished_at = started, now_ms()
+        result.source_revision_range = [
+            {
+                "session_uid": s.session_uid,
+                "before": cached[s.session_uid].fingerprint if s.session_uid in cached else None,
+                "after": s.fingerprint,
+            }
+            for s in result.sessions
+        ]
+        result.jsonl_cursors = reader.jsonl_cache.checkpoints()
         return result
     except READ_ERRORS:
         return ScanResult(complete=False, reason="source_unavailable")
@@ -117,7 +156,7 @@ def scan_for_transport(root):
         for event in history.events:
             if event.text is not None:
                 body = zlib.compress(event.text.encode(), 1)
-                result.text_buffers[event.event_uid] = body
+                result.text_buffers[(uid, event.event_uid)] = body
                 if event.text:
                     session._prepared_chunks.append(prepare_chunk(event.role, event.text, body))
                 event.text = None
@@ -135,6 +174,11 @@ def prepare_scan(config, catalog, providers=None):
         raise Failure("invalid_source", 2)
     roots = [r for r in config.roots if r.enabled and (not providers or r.provider in providers)]
     for root in roots:
+        root._jsonl_cursors = dict(
+            catalog.connection.execute(
+                "SELECT path,payload FROM jsonl_cursors WHERE root_id=?", (root.root_id,)
+            )
+        )
         root._identity_root_ids = [
             r.root_id for r in config.roots if r.enabled and r.namespace_id == root.namespace_id
         ]
@@ -158,13 +202,21 @@ def iter_scan(arguments, cancel=None):
     )
     with executor as pool:
         reader = scan_for_transport if len(arguments) > 1 else scan_root
-        pending = {pool.submit(reader, argument): index for index, argument in enumerate(arguments)}
-        for future in as_completed(pending):
-            index = pending.pop(future)
-            result = future.result()
-            if cancel and cancel.is_set():
-                result = ScanResult(complete=False, reason="cancelled")
-            yield index, result
+        pending = {
+            pool.submit(scan_metadata, argument): (index, True)
+            for index, argument in enumerate(arguments)
+        }
+        while pending:
+            ready, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in ready:
+                index, metadata = pending.pop(future)
+                result = future.result()
+                cancelled = cancel and cancel.is_set()
+                if cancelled:
+                    result = ScanResult(complete=False, reason="cancelled")
+                yield index, result
+                if metadata and not cancelled:
+                    pending[pool.submit(reader, arguments[index])] = (index, False)
 
 
 def collect_scan(arguments, cancel=None):
@@ -175,9 +227,9 @@ def collect_scan(arguments, cancel=None):
 
 
 def publish_scan(catalog, root, scanned):
-    for history in getattr(scanned, "histories", {}).values():
+    for uid, history in getattr(scanned, "histories", {}).items():
         for event in history.events:
-            body = getattr(scanned, "text_buffers", {}).get(event.event_uid)
+            body = getattr(scanned, "text_buffers", {}).get((uid, event.event_uid))
             if body is not None:
                 # Prepared search chunks and compressed bodies are already complete.
                 # Decode only when displaying a requested history page.
@@ -190,6 +242,8 @@ def publish_scan(catalog, root, scanned):
         reason=scanned.reason,
         histories=getattr(scanned, "histories", None),
         usages=getattr(scanned, "usages", None),
+        scan=scanned,
+        cursors=getattr(scanned, "jsonl_cursors", None),
     )
     return {
         "root_id": root.root_id,

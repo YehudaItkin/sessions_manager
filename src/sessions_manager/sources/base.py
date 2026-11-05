@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..models import Capability, Failure
+from ..models import Capability, Failure, now_ms
+
+RECORD_ERRORS = (Failure, OSError, ValueError, TypeError, KeyError, AttributeError)
 
 
 @dataclass
@@ -27,25 +31,44 @@ class ScanResult:
     complete: bool = True
     reason: str | None = None
     profile: str | None = None
+    stage: str = "complete"
+    started_at: int = field(default_factory=now_ms)
+    finished_at: int | None = None
+    source_revision_range: list = field(default_factory=list)
 
 
 def read_many(reader, paths):
     """Bound independent file opens; each native DB connection stays in its reader thread."""
     from concurrent.futures import ThreadPoolExecutor
 
+    def isolated(path):
+        try:
+            return reader(path)
+        except RECORD_ERRORS:
+            return None
+
     with ThreadPoolExecutor(max_workers=4) as pool:
-        yield from pool.map(reader, paths)
+        yield from pool.map(isolated, paths)
 
 
 def fingerprint(path: Path):
     try:
         info = path.stat(follow_symlinks=False)
-        return {
+        value = {
             "dev": info.st_dev,
             "inode": info.st_ino,
             "size": info.st_size,
             "mtime_ns": info.st_mtime_ns,
         }
+        if stat.S_ISLNK(info.st_mode):
+            target = path.stat()
+            value["target"] = {
+                "dev": target.st_dev,
+                "inode": target.st_ino,
+                "size": target.st_size,
+                "mtime_ns": target.st_mtime_ns,
+            }
+        return value
     except OSError:
         return {}
 
@@ -60,7 +83,10 @@ def json_file(path: Path):
         raise Failure("invalid_native_record", 3) from None
 
 
-def json_lines(path: Path):
+def json_lines(path: Path, *, cache=None):
+    if cache is not None:
+        yield from cache.read(path)
+        return
     # Native messages can be hundreds of KiB. Read complete byte lines with a
     # bounded buffer, then decode UTF-8 strictly rather than many tiny text reads.
     with path.open("rb", buffering=262144) as stream:
@@ -220,6 +246,11 @@ def prepare_cleanup_bundle(root, session, *, common_checks=None):
                 (root.path / name).exists()
                 for name in (
                     "grok.db",
+                    "grok.db-wal",
+                    "grok.db-shm",
+                    "session_search.sqlite",
+                    "session_search.sqlite-wal",
+                    "session_search.sqlite-shm",
                     "search.db",
                     "session-index.db",
                     "relocations.json",
@@ -282,8 +313,24 @@ def usage_counts(raw, mapping, *, claude=False):
 def resume_context_verified(root):
     if root.resume_context != "native" or root.executable_path is None:
         return False
+    if (
+        not root.executable_path.is_absolute()
+        or not root.executable_path.is_file()
+        or not os.access(root.executable_path, os.X_OK)
+    ):
+        return False
     if root.provider in ("grok", "cursor") and root.root_kind == "explicit":
         home = Path.home() / (".grok" if root.provider == "grok" else ".cursor")
         child = "sessions" if root.provider == "grok" else "chats"
         return root.path.resolve() in (home.resolve(), (home / child).resolve())
     return True
+
+
+def resume_capability(root):
+    if resume_context_verified(root):
+        return Capability("supported")
+    executable = root.executable_path
+    missing = not executable or not executable.is_file() or not os.access(executable, os.X_OK)
+    return Capability(
+        "unavailable", "native_executable_unavailable" if missing else "resume_binding_unverified"
+    )

@@ -3,6 +3,47 @@ import pytest
 from sessions_manager.models import Capability, Session, SourceRoot, counter, safe_text, timestamp
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("presence", "lost"),
+        ("activity", "sleeping"),
+        ("history_state", "done"),
+        ("search_state", "done"),
+        ("usage_state", "done"),
+        ("session_uid", ""),
+        ("locator", "relative/path"),
+        ("hidden", 1),
+        ("timezone_confidence", "localish"),
+        ("extra", []),
+        ("capabilities", []),
+    ],
+)
+def test_session_rejects_invalid_boundary_values(tmp_path, field, value):
+    from sessions_manager.models import public
+
+    session = Session.build(SourceRoot.create("claude", tmp_path), "one", tmp_path / "one")
+    payload = public(session) | {field: value}
+    with pytest.raises(ValueError):
+        Session.from_dict(payload)
+
+
+def test_activity_and_generation_boundaries():
+    from sessions_manager.models import ActivityEvidence, ScanGeneration
+
+    for values in (
+        {"status": "sleeping"},
+        {"pid": True},
+        {"observed_at": True},
+        {"resolved_executable": "relative"},
+    ):
+        with pytest.raises(ValueError):
+            ActivityEvidence("session", **values)
+    for values in ({"state": "done"}, {"history": "done"}, {"started_at": 20, "finished_at": 10}):
+        with pytest.raises(ValueError):
+            ScanGeneration("scan", "root", **values)
+
+
 def test_counter_unknown_zero_and_bool():
     assert counter(None) is None
     assert counter(0) == 0

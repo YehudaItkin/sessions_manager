@@ -183,8 +183,12 @@ Wire types 0/1/2/5 обрабатываются ограниченно; непо
 Metadata JSON и protobuf projection проверяются синтетическими fixtures; неизвестные
 JSON-encoded graph nodes/tool codecs остаются partial/unavailable. Vendor JS не импортируется.
 
-Context usedTokens/maxTokens допустимы только с kind=context. В v1 нет доказанного
-маппинга текущего context counters: context_metrics пуст, значения не угадываются.
+Context usedTokens/maxTokens допустимы только с kind=context. Проверенный installed
+descriptor 2026.10.22: ConversationStateStructure field 5 -> ConversationTokenDetails;
+uint32 fields 1/2 -> used_tokens/max_tokens. Отсутствующее поле остаётся null, явный 0
+сохраняется; malformed/unknown wire не даёт подставного нуля. ContextMetric содержит
+source profile, root/source revision, observed_at и completeness. Отсутствие обоих
+счётчиков оставляет context_metrics пустым; vendor JS и encryption keys не используются.
 Cumulative input/output/total usage неизвестен без отдельного доказанного ledger.
 Resume: absolute_cursor_agent, --workspace, cwd, --resume, native_id, process cwd=cwd.
 Generic agent не подставляется; на исследованной машине он относится к Grok.

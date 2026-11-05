@@ -5,7 +5,7 @@ from .base import (
     fingerprint,
     json_file,
     read_many,
-    resume_context_verified,
+    resume_capability,
 )
 
 
@@ -35,6 +35,8 @@ class Adapter:
         try:
             row = json_file(marker)
             info = row.get("info", {})
+            if not isinstance(info, dict):
+                raise Failure("unsupported_native_schema", 3)
             native = info.get("id")
             if not isinstance(native, str) or native != marker.parent.name:
                 raise Failure("unsupported_native_schema", 3)
@@ -58,8 +60,7 @@ class Adapter:
                 known_bytes=known_bytes,
             )
             session.capabilities["metadata"] = Capability("supported")
-            if resume_context_verified(self.root):
-                session.capabilities["resume"] = Capability("supported")
+            session.capabilities["resume"] = resume_capability(self.root)
             return session
         except (Failure, OSError):
             return None
@@ -84,7 +85,7 @@ class Adapter:
         if not updates.exists():
             return self._raw_history(session, path / "chat_history.jsonl")
         try:
-            for ordinal, row in json_lines(updates):
+            for ordinal, row in json_lines(updates, cache=getattr(self, "jsonl_cache", None)):
                 params = row.get("params", {})
                 if params.get("sessionId") not in (None, session.native_id):
                     state = "partial"
@@ -191,7 +192,7 @@ class Adapter:
         events = []
         state = "complete"
         try:
-            for ordinal, row in json_lines(path):
+            for ordinal, row in json_lines(path, cache=getattr(self, "jsonl_cache", None)):
                 role = row.get("role") or row.get("type")
                 if role == "system":
                     continue

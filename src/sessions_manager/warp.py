@@ -131,6 +131,35 @@ def config_text(interpreter, data_dir, token):
     )
 
 
+def trusted_config_directory(directory):
+    """Validate the entire path before creating anything in a launch directory."""
+    directory = Path(directory).absolute()
+    missing = []
+    try:
+        for current in [directory, *directory.parents]:
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                missing.append(current)
+                continue
+            # Root-owned sticky ancestors (e.g. /tmp) cannot replace owned children.
+            sticky_parent = (
+                current != directory and info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            )
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid not in (0, os.getuid())
+                or (current == directory and info.st_uid != os.getuid())
+                or (info.st_mode & 0o022 and not sticky_parent)
+            ):
+                raise Failure("unsafe_warp_config_dir", 5)
+        for current in reversed(missing):
+            current.mkdir(mode=0o700)
+    except OSError:
+        raise Failure("unsafe_warp_config_dir", 5) from None
+    return directory
+
+
 def deliver(catalog, request, *, config_dir=None, opener=subprocess.run):
     revalidate(request)
     if not Path("/bin/zsh").is_file():
@@ -139,10 +168,7 @@ def deliver(catalog, request, *, config_dir=None, opener=subprocess.run):
         Path("/Applications/Warp.app").exists() or (Path.home() / "Applications/Warp.app").exists()
     ):
         raise Failure("warp_unavailable", 8)
-    directory = Path(config_dir or Path.home() / ".warp/tab_configs")
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if directory.is_symlink() or directory.stat().st_uid != os.getuid():
-        raise Failure("unsafe_warp_config_dir", 5)
+    directory = trusted_config_directory(config_dir or Path.home() / ".warp/tab_configs")
     token = create_ticket(catalog, request)
     name = "sessions_manager_" + request.launch_id.replace("-", "")
     path = directory / (name + ".toml")

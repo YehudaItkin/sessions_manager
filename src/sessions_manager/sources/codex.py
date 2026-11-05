@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from ..models import Capability, Failure, Session, timestamp
-from .base import ScanResult, fingerprint, json_lines, resume_context_verified
+from .base import RECORD_ERRORS, ScanResult, fingerprint, json_lines, resume_capability
 from .sqlite_reader import NativeSQLite
 
 
@@ -48,40 +48,43 @@ class Adapter:
                 reader.tables["threads"] = columns
                 rows = reader.read("threads", sorted(columns))
             for row in rows:
-                locator = Path(
-                    row.get("rollout_path") or root.path / "sessions" / (row["id"] + ".jsonl")
-                )
-                session = Session.build(
-                    root,
-                    row["id"],
-                    locator,
-                    cwd=row.get("cwd"),
-                    title=row.get("title") or row.get("name"),
-                    preview=row.get("preview"),
-                    model=row.get("model"),
-                    created_at=timestamp(
-                        row.get("created_at_ms") or row.get("created_at"),
-                        milliseconds=bool(row.get("created_at_ms")),
-                    ),
-                    last_activity_at=timestamp(
-                        row.get("recency_at_ms")
-                        or row.get("updated_at_ms")
-                        or row.get("recency_at")
-                        or row.get("updated_at")
-                    ),
-                    profile=self.profile,
-                    fingerprint={
-                        **stamps,
-                        "rollout": fingerprint(locator),
-                    },
-                    extra={"history_mode": row.get("history_mode")},
-                )
-                self._capabilities(session, locator.is_file())
-                result.sessions.append(session)
+                try:
+                    locator = Path(
+                        row.get("rollout_path") or root.path / "sessions" / (row["id"] + ".jsonl")
+                    )
+                    session = Session.build(
+                        root,
+                        row["id"],
+                        locator,
+                        cwd=row.get("cwd"),
+                        title=row.get("title") or row.get("name"),
+                        preview=row.get("preview"),
+                        model=row.get("model"),
+                        created_at=timestamp(
+                            row.get("created_at_ms") or row.get("created_at"),
+                            milliseconds=bool(row.get("created_at_ms")),
+                        ),
+                        last_activity_at=timestamp(
+                            row.get("recency_at_ms")
+                            or row.get("updated_at_ms")
+                            or row.get("recency_at")
+                            or row.get("updated_at")
+                        ),
+                        profile=self.profile,
+                        fingerprint={
+                            **stamps,
+                            "rollout": fingerprint(locator),
+                        },
+                        extra={"history_mode": row.get("history_mode")},
+                    )
+                    self._capabilities(session, locator.is_file())
+                    result.sessions.append(session)
+                except RECORD_ERRORS:
+                    result.complete, result.reason = False, "invalid_native_record"
         else:
             for locator in sorted((root.path / "sessions").rglob("*.jsonl")):
                 try:
-                    _, row = next(json_lines(locator))
+                    _, row = next(json_lines(locator, cache=getattr(self, "jsonl_cache", None)))
                     meta = row.get("payload", {})
                     if row.get("type") != "session_meta" or not meta.get("id"):
                         raise Failure("unsupported_native_schema", 3)
@@ -96,13 +99,15 @@ class Adapter:
                     )
                     self._capabilities(session, True)
                     result.sessions.append(session)
-                except (Failure, StopIteration):
+                except (*RECORD_ERRORS, StopIteration):
                     result.complete, result.reason = False, "invalid_native_record"
         return result
 
     def _capabilities(self, session, has_rollout):
         session.capabilities["metadata"] = Capability("supported")
         session.capabilities["cleanup"] = Capability("unavailable", "native_cascade_unbounded")
+        if getattr(self, "metadata_only", False):
+            return
         from .native_version import resolve_cleanup_version
 
         paginated = (
@@ -110,8 +115,8 @@ class Adapter:
             and resolve_cleanup_version(self.root) == "0.166.0"
         )
         persisted = has_rollout or (paginated and self._has_paginated_history(session.native_id))
-        if persisted and resume_context_verified(self.root):
-            session.capabilities["resume"] = Capability("supported")
+        if persisted:
+            session.capabilities["resume"] = resume_capability(self.root)
         else:
             session.capabilities["resume"] = Capability(
                 "unavailable",
@@ -197,7 +202,7 @@ class Adapter:
                         events[event.native_id] = event
             path = Path(session.locator)
             if path.is_file():
-                for ordinal, row in json_lines(path):
+                for ordinal, row in json_lines(path, cache=getattr(self, "jsonl_cache", None)):
                     payload = row.get("payload", {})
                     if row.get("type") == "response_item":
                         native = payload.get("id")
@@ -327,7 +332,7 @@ class Adapter:
         if not path.is_file():
             return UsageResult(state="unavailable", reason="not_recorded")
         try:
-            for ordinal, row in json_lines(path):
+            for ordinal, row in json_lines(path, cache=getattr(self, "jsonl_cache", None)):
                 payload = row.get("payload", {})
                 if not isinstance(payload, dict):
                     result.state = "partial"

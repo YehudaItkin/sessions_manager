@@ -195,3 +195,25 @@ Hide, or Current terminal). Unknown codes have a safe generic explanation plus c
 Manual resume guidance retains native ID, history location and original/requested cwd,
 with only the already verified help argv. Display translation does not alter serialized
 JSON envelopes, confirmation plans/tokens, journal payloads or machine-readable codes.
+
+
+## Convergence interface amendment — 2026-11-05
+
+List/refresh JSON keeps full session IDs and adds per-result `handles` and `matches`
+maps keyed by session_uid. Handles are computed against the entire selectable
+catalog before filtering/pagination. A match contains bounded sanitized original
+text, field/role and, for history, logical event_uid/ordinal. Native title/preview
+is unchanged. Human results show the context and available actions; missing
+title/preview is explicit unknown. Terminal escapes/markup remain inert.
+
+Statistics adds `selection` (actual source/project/model/activity/date/query/scope
+and explicit session IDs if selected) and `activity_range` (known UTC started_at/
+last_activity_at plus completeness). Period filters still select session lifetimes.
+TUI statistics has its own All/Visible/Hidden control, initially All; the chosen
+value persists on reopening. Trash stays excluded. Context occupancy is displayed
+separately in human output and `context_metrics`; it is never lifetime usage.
+
+During refresh, early metadata is visible while history/search/usage remain partial
+with scan_pending. Completed roots publish independently, including generation
+reader times and source revision ranges. Error/unfinished roots do not mark
+unseen cached sessions missing and never claim complete search.

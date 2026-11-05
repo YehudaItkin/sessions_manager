@@ -1,5 +1,5 @@
 from ..models import Capability, Failure, Session, timestamp
-from .base import ScanResult, fingerprint, json_lines, read_many, resume_context_verified
+from .base import ScanResult, fingerprint, json_lines, read_many, resume_capability
 
 
 class Adapter:
@@ -23,7 +23,20 @@ class Adapter:
 
     def _discover_one(self, path):
         try:
-            rows = [row for _, row in json_lines(path)]
+            if getattr(self, "metadata_only", False):
+                from contextlib import closing
+                from itertools import islice
+
+                rows = []
+                with closing(json_lines(path, cache=getattr(self, "jsonl_cache", None))) as stream:
+                    for _, row in islice(stream, 32):
+                        rows.append(row)
+                        if row.get("type") in ("user", "assistant"):
+                            break
+            else:
+                rows = [
+                    row for _, row in json_lines(path, cache=getattr(self, "jsonl_cache", None))
+                ]
             native = path.stem
             records = [
                 r
@@ -35,11 +48,24 @@ class Adapter:
             dates = [t for r in records if (t := timestamp(r.get("timestamp"))) is not None]
             cwd = next((r["cwd"] for r in reversed(records) if r.get("cwd")), None)
             first = next(
-                (r.get("message", {}).get("content") for r in records if r["type"] == "user"),
+                (
+                    r["message"].get("content")
+                    for r in records
+                    if r["type"] == "user" and isinstance(r.get("message"), dict)
+                ),
                 None,
             )
             if isinstance(first, list):
-                first = " ".join(b.get("text", "") for b in first if b.get("type") == "text")
+                first = (
+                    " ".join(
+                        b["text"]
+                        for b in first
+                        if isinstance(b, dict)
+                        and b.get("type") == "text"
+                        and isinstance(b.get("text"), str)
+                    )
+                    or None
+                )
             title = next(
                 (r.get("title") for r in reversed(rows) if r.get("type") == "ai-title"), None
             )
@@ -63,7 +89,9 @@ class Adapter:
                 model=model,
                 preview=first[:500] if isinstance(first, str) else None,
                 created_at=min(dates) if dates else None,
-                last_activity_at=max(dates) if dates else None,
+                last_activity_at=max(dates)
+                if dates and not getattr(self, "metadata_only", False)
+                else None,
                 profile=self.profile,
                 fingerprint=fingerprint(path),
                 known_bytes=path.stat().st_size,
@@ -72,8 +100,7 @@ class Adapter:
 
             session._cleanup_shape_verified = claude_cleanup_shape(rows, native)
             session.capabilities["metadata"] = Capability("supported")
-            if resume_context_verified(self.root):
-                session.capabilities["resume"] = Capability("supported")
+            session.capabilities["resume"] = resume_capability(self.root)
             return session
         except (Failure, OSError, ValueError):
             return None
@@ -86,7 +113,9 @@ class Adapter:
         events = {}
         state = "complete"
         try:
-            for ordinal, row in json_lines(Path(session.locator)):
+            for ordinal, row in json_lines(
+                Path(session.locator), cache=getattr(self, "jsonl_cache", None)
+            ):
                 kind = row.get("type")
                 if kind not in ("user", "assistant"):
                     if kind not in (
@@ -107,6 +136,9 @@ class Adapter:
                         state = "partial"
                     continue
                 message = row.get("message", {})
+                if not isinstance(message, dict):
+                    state = "partial"
+                    continue
                 native = message.get("id") if kind == "assistant" else row.get("uuid")
                 if not native:
                     state = "partial"
@@ -123,13 +155,23 @@ class Adapter:
                 tool_results = []
                 tool_calls = []
                 for block in blocks:
+                    if not isinstance(block, dict):
+                        state = "partial"
+                        continue
                     if block.get("type") == "text":
-                        texts.append(block.get("text", ""))
+                        if isinstance(block.get("text"), str):
+                            texts.append(block["text"])
+                        else:
+                            state = "partial"
                     elif block.get("type") == "tool_result":
                         value = block.get("content", "")
                         if isinstance(value, list):
                             value = "\n".join(
-                                b.get("text", "") for b in value if b.get("type") == "text"
+                                b["text"]
+                                for b in value
+                                if isinstance(b, dict)
+                                and b.get("type") == "text"
+                                and isinstance(b.get("text"), str)
                             )
                         tool_results.append((block.get("tool_use_id") or native, str(value)))
                     elif block.get("type") == "tool_use":
@@ -200,7 +242,9 @@ class Adapter:
             "total_tokens": "total_tokens",
         }
         try:
-            for _, row in json_lines(Path(session.locator)):
+            for _, row in json_lines(
+                Path(session.locator), cache=getattr(self, "jsonl_cache", None)
+            ):
                 message = row.get("message", {})
                 if row.get("type") != "assistant" or not isinstance(message.get("usage"), dict):
                     continue
