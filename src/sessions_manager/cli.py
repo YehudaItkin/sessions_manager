@@ -693,7 +693,7 @@ def cleanup_action(ctx, action, ids, confirm, assert_closed=False):
         failed = [
             item
             for item in result["items"]
-            if item["state"] not in ("trashed", "restored", "purged")
+            if item["state"] not in ("trashed", "restored", "purged") or item.get("cleanup_pending")
         ]
         if failed:
             if len(failed) < len(result["items"]):
@@ -754,7 +754,10 @@ def trash_retry(ctx: typer.Context, operation_id: str, assert_closed: bool = Fal
     try:
         result = service.retry(operation_id, assert_closed=assert_closed)
         emit(ctx.obj, envelope("operation_result", result))
-        if any(i["state"] not in ("trashed", "restored", "purged") for i in result["items"]):
+        if any(
+            i["state"] not in ("trashed", "restored", "purged") or i.get("cleanup_pending")
+            for i in result["items"]
+        ):
             raise typer.Exit(3)
     finally:
         service.catalog.close()

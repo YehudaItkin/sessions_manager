@@ -48,6 +48,73 @@ def test_symlink_rejected(tmp_path):
         ensure_private(link)
 
 
+@pytest.mark.parametrize("existing", [True, False])
+def test_private_leaf_under_writable_parent_rejected_without_changes(tmp_path, existing):
+    parent = tmp_path / "shared"
+    parent.mkdir(mode=0o700)
+    leaf = parent / "private"
+    if existing:
+        leaf.mkdir(mode=0o700)
+    parent.chmod(0o777)
+    with pytest.raises(Failure, match="unsafe_data_dir"):
+        ensure_private(leaf)
+    assert leaf.exists() == existing
+    assert parent.stat().st_mode & 0o777 == 0o777
+
+
+def test_user_symlink_ancestor_rejected_before_creation(tmp_path):
+    parent = tmp_path / "actual"
+    parent.mkdir(mode=0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    with pytest.raises(Failure, match="unsafe_data_dir"):
+        ensure_private(alias / "private")
+    assert not (parent / "private").exists()
+
+
+def test_platform_alias_is_bound_to_canonical_private_directory(tmp_path):
+    from pathlib import Path
+
+    if not str(tmp_path).startswith("/private/var/"):
+        pytest.skip("macOS root-owned /var alias")
+    alias = Path(str(tmp_path).replace("/private/var/", "/var/", 1)) / "private"
+    result = ensure_private(alias)
+    assert result == alias.resolve()
+    cfg = Config(alias, tmp_path / "config", [], "replace")
+    cfg.prepare()
+    assert cfg.data_dir == result
+
+
+def test_creation_uses_open_parent_even_if_lexical_path_is_swapped(tmp_path, monkeypatch):
+    import os
+
+    parent, moved, outside = (tmp_path / name for name in ("parent", "moved", "outside"))
+    parent.mkdir(mode=0o700)
+    outside.mkdir(mode=0o700)
+    original = os.mkdir
+
+    def swapped(path, mode=0o777, *, dir_fd=None):
+        if path == "private" and dir_fd is not None:
+            parent.rename(moved)
+            parent.symlink_to(outside, target_is_directory=True)
+        return original(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", swapped)
+    with pytest.raises(Failure, match="unsafe_data_dir"):
+        ensure_private(parent / "private")
+    assert not (outside / "private").exists()
+    assert (moved / "private").is_dir()
+
+
+def test_root_owned_sticky_parent_is_supported():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory(prefix="sessions-boundary-", dir="/tmp") as directory:
+        private = ensure_private(Path(directory) / "private")
+        assert private.stat().st_mode & 0o777 == 0o700
+
+
 def test_manager_state_cannot_overlap_native_source(tmp_path):
     from sessions_manager.models import SourceRoot
 
@@ -59,3 +126,8 @@ def test_manager_state_cannot_overlap_native_source(tmp_path):
     with pytest.raises(Failure, match="data_dir_source_overlap"):
         cfg.prepare()
     assert not cfg.data_dir.exists()
+
+
+def test_filesystem_root_is_not_a_private_manager_directory():
+    with pytest.raises(Failure, match="unsafe_data_dir"):
+        ensure_private("/")

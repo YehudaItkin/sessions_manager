@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,85 @@ from sessions_manager.config import Config
 from sessions_manager.discovery import refresh
 from sessions_manager.models import SourceRoot
 from tests.support.claude_factory import make
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude", "grok", "cursor"])
+def test_fresh_missing_root_is_unavailable_not_complete_empty(tmp_path, provider):
+    from sessions_manager.discovery import adapter, scan_root
+
+    root = SourceRoot.create(provider, tmp_path / "missing")
+    for result in (adapter(root).discover(), scan_root((root, {}))):
+        assert not result.complete
+        assert result.reason == "source_unavailable"
+
+
+def test_denied_child_enumeration_preserves_cached_sessions(isolated, tmp_path, monkeypatch):
+    import os
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    make(root.path)
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    original = os.scandir
+
+    def denied(path):
+        if not isinstance(path, int) and Path(path) == root.path / "projects":
+            raise PermissionError("synthetic denied listing")
+        return original(path)
+
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        uid = catalog.sessions()[0].session_uid
+        monkeypatch.setattr(os, "scandir", denied)
+        receipts = refresh(cfg, catalog)
+        assert receipts[0]["state"] == "partial"
+        assert catalog.get(uid).presence != "missing"
+        assert len(catalog.events(uid)) == 2
+
+
+def test_deep_content_keeps_healthy_neighbor_and_metadata(isolated, tmp_path):
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    path = make(root.path, "broken")
+    make(root.path, "healthy", message_id="healthy-api")
+    path.write_text(
+        path.read_text().replace(
+            '"Synthetic Claude question"', "[" * 1100 + '"nested"' + "]" * 1100
+        )
+    )
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        receipts = refresh(cfg, catalog)
+        assert receipts[0]["state"] == "partial"
+        sessions = {s.native_id: s for s in catalog.sessions()}
+        assert set(sessions) == {"broken", "healthy"}
+        assert sessions["healthy"].history_state == "complete"
+        assert sessions["broken"].history_state != "complete"
+
+
+def test_unexpected_worker_failure_is_isolated_and_interrupt_is_not_swallowed(
+    tmp_path, monkeypatch
+):
+    from sessions_manager.discovery import collect_scan
+    from sessions_manager.sources.claude import Adapter
+
+    root = SourceRoot.create("claude", tmp_path)
+
+    def broken(self):
+        raise RuntimeError("synthetic private content must not be diagnostic")
+
+    monkeypatch.setattr(Adapter, "discover", broken)
+    result = collect_scan([(root, {})])[0]
+    assert not result.complete and result.reason == "source_reader_failed"
+
+    def interrupted(self):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(Adapter, "discover", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        collect_scan([(root, {})])
 
 
 @pytest.mark.parametrize("provider", ["claude", "grok"])

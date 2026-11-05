@@ -248,3 +248,23 @@ Migrations are additive and affect only the manager catalog. Normalizer 3 rebuil
 old history/search caches from configured native sources; unknown or unavailable
 sources remain explicitly partial/stale. Invalid persisted model values raise a
 content-free catalog_record_invalid error without automatic repair or data loss.
+
+
+## Phase 10 storage amendment — 2026-11-05
+
+- locations.payload is nullable for old/default single-root rows. Multi-root namespaces
+  retain the native session metadata/capabilities, current cycle and metadata/full stage;
+  versioned identity digests include conversation graph membership and content. No extra
+  transcript bodies are stored there. A new refresh invalidates prior-cycle agreement.
+- sessions.current_trash_id is nullable and owns the current trashed derived snapshot.
+  Trash sets it, verified restore/reappearance clears it, and purge clears derived data
+  only when the selected entry owns that snapshot. Stable IDs and hidden flags survive.
+- LaunchRequest.alias_bindings is an additive list of agreed root descriptors, locators
+  and native fingerprints. Older requests default to an empty list; a changed catalog
+  binding requires a fresh request, and all copies are checked before exec.
+- OperationItem.cleanup_pending distinguishes final manifest/directory/fsync work from
+  a committed purged receipt. Such results retain state=purged, expose retry/inspect and
+  return a nonzero CLI status until cleanup completes; no recoverable payload is claimed.
+
+All migrations remain confined to the private manager catalog. Existing location rows
+without evidence require rediscovery before multi-location actions can be supported.

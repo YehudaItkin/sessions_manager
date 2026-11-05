@@ -33,6 +33,15 @@ class CleanupService:
         self.config, self.catalog, self.fault = config, catalog, fault
         self.catalog.connection.executescript(SCHEMA)
         ensure_private(config.data_dir / "trash")
+        # Legacy catalogues have no explicit owner. Bind only an unambiguous
+        # active trash entry; multiple generations remain protected.
+        with catalog.writer() as db:
+            db.execute("""UPDATE sessions SET current_trash_id=(
+                SELECT trash_id FROM trash_entries WHERE session_uid=sessions.uid
+                AND state IN ('trashed','purging'))
+                WHERE presence='trashed' AND current_trash_id IS NULL
+                AND (SELECT COUNT(*) FROM trash_entries WHERE session_uid=sessions.uid
+                AND state IN ('trashed','purging'))=1""")
 
     @contextmanager
     def lock(self):
@@ -447,7 +456,8 @@ class CleanupService:
         self._checkpoint("trash_verified", item["target_id"])
         with self.catalog.writer() as db:
             db.execute(
-                "UPDATE sessions SET presence='trashed' WHERE uid=?", (entry["session_uid"],)
+                "UPDATE sessions SET presence='trashed',current_trash_id=? WHERE uid=?",
+                (entry["trash_id"], entry["session_uid"]),
             )
             db.execute(
                 "UPDATE trash_entries SET state='trashed' WHERE trash_id=?", (entry["trash_id"],)
@@ -493,7 +503,8 @@ class CleanupService:
                 raise Failure("restore_verification_failed", 6)
         with self.catalog.writer() as db:
             db.execute(
-                "UPDATE sessions SET presence='present' WHERE uid=?", (entry["session_uid"],)
+                "UPDATE sessions SET presence='present',current_trash_id=NULL WHERE uid=?",
+                (entry["session_uid"],),
             )
             db.execute(
                 "UPDATE trash_entries SET state='restored' WHERE trash_id=?", (entry["trash_id"],)
@@ -507,7 +518,14 @@ class CleanupService:
         item["trash_id"] = entry["trash_id"]
         self._save_item(op, item)
         if entry["state"] == "purged":
-            item.update(state="purged", trash_id=entry["trash_id"], error=None, recovery_options=[])
+            self._finish_purge(entry, directory)
+            item.update(
+                state="purged",
+                trash_id=entry["trash_id"],
+                error=None,
+                recovery_options=[],
+                cleanup_pending=False,
+            )
             return
         self._validate_entry(entry, directory, subset=True)
         for category in ("payload", "backup"):
@@ -520,10 +538,10 @@ class CleanupService:
                 self._checkpoint("purge_tree", item["target_id"])
         with self.catalog.writer() as db:
             uid = entry["session_uid"]
-            if (
-                db.execute("SELECT presence FROM sessions WHERE uid=?", (uid,)).fetchone()[0]
-                == "trashed"
-            ):
+            if db.execute(
+                "SELECT 1 FROM sessions WHERE uid=? AND presence='trashed' AND current_trash_id=?",
+                (uid, entry["trash_id"]),
+            ).fetchone():
                 from .models import Session, capabilities
 
                 row = db.execute("SELECT payload FROM sessions WHERE uid=?", (uid,)).fetchone()
@@ -537,7 +555,7 @@ class CleanupService:
                 session.capabilities = capabilities()
                 session.history_state = session.search_state = session.usage_state = "unavailable"
                 db.execute(
-                    "UPDATE sessions SET presence='purged',payload=? WHERE uid=?",
+                    "UPDATE sessions SET presence='purged',payload=?,current_trash_id=NULL WHERE uid=?",
                     (json.dumps(public(session)), uid),
                 )
                 db.execute("DELETE FROM chunks WHERE uid=?", (uid,))
@@ -566,8 +584,36 @@ class CleanupService:
                 ),
             )
         # Terminal receipt is committed before removing the final private manifest.
+        self._checkpoint("purge_receipt", item["target_id"])
+        self._finish_purge(entry, directory)
+        item.update(
+            state="purged",
+            trash_id=entry["trash_id"],
+            error=None,
+            recovery_options=[],
+            cleanup_pending=False,
+        )
+
+    def _finish_purge(self, entry, directory):
+        # After the terminal receipt only the original manifest/empty directory
+        # may remain. Never expand a retry's scope to newly introduced contents.
+        parent = self.config.data_dir / "trash"
+        fsops.secure_path(parent, self.config.data_dir)
+        if not directory.exists() and not directory.is_symlink():
+            fsops.fsync_dir(parent)
+            return
+        fsops.secure_path(directory, parent)
+        if any(p.name != "manifest.json" for p in directory.iterdir()):
+            raise Failure("unknown_trash_artifact", 5)
+        manifest = directory / "manifest.json"
+        if manifest.exists() or manifest.is_symlink():
+            fsops.secure_path(manifest, directory)
+            expected = self.catalog.connection.execute(
+                "SELECT manifest_digest FROM trash_entries WHERE trash_id=?", (entry["trash_id"],)
+            ).fetchone()[0]
+            if digest(manifest.read_bytes()) != expected:
+                raise Failure("trash_manifest_changed", 5)
         fsops.remove_owned_tree(directory)
-        item.update(state="purged", trash_id=entry["trash_id"], error=None, recovery_options=[])
 
     def commit(self, action, ids, token, *, assert_closed=False, _operation_id=None):
         ids = self._ids(action, ids)
@@ -582,7 +628,12 @@ class CleanupService:
                     (op, target["target_id"]),
                 ).fetchone()
                 item = json.loads(row[0])
-                if item["state"] in ("trashed", "restored", "purged", "failed_no_change"):
+                if item["state"] in (
+                    "trashed",
+                    "restored",
+                    "purged",
+                    "failed_no_change",
+                ) and not item.get("cleanup_pending"):
                     result.append(item)
                     continue
                 try:
@@ -593,22 +644,43 @@ class CleanupService:
                     else:
                         self._purge(op, target, item)
                 except (Failure, OSError) as error:
-                    changed = False
-                    if item["trash_id"]:
-                        parent = self.config.data_dir / "trash" / item["trash_id"] / "payload"
-                        changed = parent.exists() and any(parent.iterdir())
-                    if action in ("restore", "purge"):
-                        changed = True
-                    item["state"] = "recovery_required" if changed else "failed_no_change"
-                    item["error"] = error.code if isinstance(error, Failure) else "io_error"
-                    item["recovery_options"] = (
-                        ["retry_same_confirmation", "inspect_trash"] if changed else ["new_preview"]
+                    durable = (
+                        self.catalog.connection.execute(
+                            "SELECT state FROM trash_entries WHERE trash_id=?", (item["trash_id"],)
+                        ).fetchone()
+                        if item["trash_id"]
+                        else None
                     )
-                    if item["trash_id"]:
-                        self._entry_state(item["trash_id"], item["state"])
+                    if action == "purge" and durable and durable[0] == "purged":
+                        item.update(
+                            state="purged",
+                            cleanup_pending=True,
+                            error=error.code if isinstance(error, Failure) else "io_error",
+                            recovery_options=["retry_same_confirmation", "inspect_trash"],
+                        )
+                    else:
+                        changed = False
+                        if item["trash_id"]:
+                            parent = self.config.data_dir / "trash" / item["trash_id"] / "payload"
+                            changed = parent.exists() and any(parent.iterdir())
+                        if action in ("restore", "purge"):
+                            changed = True
+                        item["state"] = "recovery_required" if changed else "failed_no_change"
+                        item["error"] = error.code if isinstance(error, Failure) else "io_error"
+                        item["recovery_options"] = (
+                            ["retry_same_confirmation", "inspect_trash"]
+                            if changed
+                            else ["new_preview"]
+                        )
+                        if item["trash_id"]:
+                            self._entry_state(item["trash_id"], item["state"])
                 self._save_item(op, item)
                 result.append(item)
-            terminal = all(item["state"] in ("trashed", "restored", "purged") for item in result)
+            terminal = all(
+                item["state"] in ("trashed", "restored", "purged")
+                and not item.get("cleanup_pending")
+                for item in result
+            )
             with self.catalog.writer() as db:
                 db.execute(
                     "UPDATE operations SET state=? WHERE operation_id=?",
@@ -623,7 +695,7 @@ class CleanupService:
         ):
             state = row["state"]
             current = self.catalog.connection.execute(
-                "SELECT i.operation_id FROM operation_items i JOIN operations o USING(operation_id) WHERE i.target_id=? OR json_extract(i.payload,'$.trash_id')=? ORDER BY o.created_at DESC,o.rowid DESC LIMIT 1",
+                "SELECT i.operation_id,i.payload FROM operation_items i JOIN operations o USING(operation_id) WHERE i.target_id=? OR json_extract(i.payload,'$.trash_id')=? ORDER BY o.created_at DESC,o.rowid DESC LIMIT 1",
                 (row["trash_id"], row["trash_id"]),
             ).fetchone()
             operation_id = current[0] if current else row["operation_id"]
@@ -638,6 +710,10 @@ class CleanupService:
                 if state == "trashed"
                 else ["retry_same_confirmation", "inspect_trash"]
             )
+            if state == "purged" and current:
+                progress = json.loads(current[1])
+                if progress.get("cleanup_pending") or progress["state"] != "purged":
+                    actions = ["retry_same_confirmation", "inspect_trash"]
             items.append(
                 {
                     "trash_id": row["trash_id"],

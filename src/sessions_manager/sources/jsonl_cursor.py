@@ -13,7 +13,7 @@ import zlib
 from ..models import NORMALIZER_VERSION, Failure
 from .base import fingerprint
 
-VERSION = "jsonl-input-1/" + NORMALIZER_VERSION
+VERSION = "jsonl-input-2/" + NORMALIZER_VERSION
 # Only fields consumed by the supported Claude/Codex/Grok JSONL readers. Unknown
 # properties (including credentials/config/environment) never enter the checkpoint.
 KEYS = set(
@@ -28,11 +28,16 @@ toolCallId status agentTimestampMs command output turn_id
 )
 
 
-def project(value):
+def project(value, depth=0, budget=None):
+    if budget is None:
+        budget = [100000]
+    budget[0] -= 1
+    if depth > 64 or budget[0] < 0:
+        raise Failure("jsonl_projection_limit", 3)
     if isinstance(value, dict):
-        return {key: project(item) for key, item in value.items() if key in KEYS}
+        return {key: project(item, depth + 1, budget) for key, item in value.items() if key in KEYS}
     if isinstance(value, list):
-        return [project(item) for item in value]
+        return [project(item, depth + 1, budget) for item in value]
     return value
 
 
@@ -122,11 +127,12 @@ class JSONLCursor:
                     value = json.loads(raw) if raw.strip() else None
                     if value is not None and not isinstance(value, dict):
                         raise ValueError()
-                except (ValueError, UnicodeError):
+                    projected = project(value) if value is not None else None
+                except (ValueError, UnicodeError, Failure, RecursionError):
                     incomplete = True
                     break
                 if value is not None:
-                    rows.append([ordinal, project(value)])
+                    rows.append([ordinal, projected])
                 checksum.update(raw)
                 offset += len(raw)
                 ordinal += 1

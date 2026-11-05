@@ -23,7 +23,51 @@ def root_from_dict(value):
     return SourceRoot(**value)
 
 
+def catalog_alias_binding(data_dir, uid):
+    """Read the current alias guard without creating/migrating manager state."""
+    import sqlite3
+    import stat
+
+    from .catalog import session_payload
+    from .fsops import trusted_directory
+
+    directory = Path(data_dir)
+    if directory.is_symlink():
+        raise Failure("unsafe_directory_path", 5)
+    if not directory.exists():
+        return None
+    directory = trusted_directory(directory, private=True)
+    path = directory / "catalog.sqlite3"
+    if not path.exists():
+        return None
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o077
+        or info.st_nlink != 1
+    ):
+        raise Failure("unsafe_catalog", 6)
+    try:
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA trusted_schema=OFF")
+            row = db.execute("SELECT payload,presence FROM sessions WHERE uid=?", (uid,)).fetchone()
+    except sqlite3.Error:
+        raise Failure("catalog_binding_unavailable", 6) from None
+    if row is None:
+        return None
+    session = session_payload(row[0])
+    if session.extra.get("identity_conflict"):
+        raise Failure(session.extra["identity_conflict"], 5)
+    if row[1] != "present":
+        raise Failure("source_changed", 5)
+    return session.extra.get("alias_bindings", [])
+
+
 def build_request(root, session, data_dir, *, cwd=None, target="current"):
+    binding = catalog_alias_binding(data_dir, session.session_uid)
+    alias_bindings = session.extra.get("alias_bindings", []) if binding is None else binding
     chosen = Path(cwd or session.cwd or "/nonexistent").expanduser().absolute()
     locator = {
         "namespace_id": session.namespace_id,
@@ -101,6 +145,7 @@ def build_request(root, session, data_dir, *, cwd=None, target="current"):
         os.getuid(),
         source_root=public(root),
         executable_fingerprint=fingerprint(executable.resolve()),
+        alias_bindings=alias_bindings,
     )
 
 
@@ -109,6 +154,20 @@ def revalidate(request):
         raise Failure("launch_owner_mismatch", 5)
     if fingerprint(Path(request.executable).resolve()) != request.executable_fingerprint:
         raise Failure("executable_changed", 5)
+    binding = catalog_alias_binding(request.data_dir, request.session_uid)
+    if binding is not None and binding != request.alias_bindings:
+        raise Failure("launch_binding_changed", 5)
+    for alias in request.alias_bindings:
+        peer = root_from_dict(alias["root"])
+        discovered = adapter(peer).discover()
+        copies = [s for s in discovered.sessions if s.session_uid == request.session_uid]
+        if (
+            not discovered.complete
+            or len(copies) != 1
+            or copies[0].fingerprint != alias["fingerprint"]
+            or copies[0].locator != alias["locator"]
+        ):
+            raise Failure("identity_binding_unverified", 5)
     root = root_from_dict(request.source_root)
     sessions = adapter(root).discover().sessions
     found = [s for s in sessions if s.session_uid == request.session_uid]

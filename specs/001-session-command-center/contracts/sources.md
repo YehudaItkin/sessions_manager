@@ -224,3 +224,15 @@ ConversationTurnStructure agent.v1 различает agent field 1 и shell fie
 shell command/stdout/stderr только отображаются. Unknown/missing node даёт partial,
 но не прекращает чтение следующих turns/steps и не скрывает session metadata.
 Opaque encrypted/model/key fields и reasoning не копируются.
+
+
+## Phase 10 enumeration amendment — 2026-11-05
+
+Missing/not-a-directory roots return partial/source_unavailable, including a fresh cache.
+Known storage-directory enumeration errors return source_enumeration_failed instead of
+complete empty; only verified absence of an optional child storage directory is empty.
+JSONL projection is bounded to depth 64 / 100,000 nodes per record. An invalid/over-limit
+record preserves its verified prefix and healthy neighbors as partial; diagnostics do
+not include record contents. Unexpected worker exceptions isolate their root with
+source_reader_failed; KeyboardInterrupt/SystemExit propagate. Checkpoint version changes
+revalidate prior cached records from native sources without native writes.

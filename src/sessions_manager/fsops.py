@@ -15,12 +15,84 @@ from pathlib import Path
 from .models import Failure
 
 
+def trusted_directory(path, *, create=False, private=False, owned=True):
+    """Walk from / with directory descriptors; bind only trusted platform aliases."""
+    path = Path(path).expanduser().absolute()
+    if ".." in path.parts:
+        raise Failure("unsafe_directory_path", 5)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    for _ in range(40):
+        fd = os.open("/", flags)
+        walked = []
+        try:
+            parts = path.parts[1:]
+            for index, part in enumerate(parts):
+                last = index == len(parts) - 1
+                try:
+                    info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                    info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    # /var and /tmp are root-controlled aliases on macOS. User
+                    # aliases are rejected; the caller receives the bound path.
+                    if last or info.st_uid != 0 or os.fstat(fd).st_uid != 0:
+                        raise Failure("unsafe_directory_path", 5)
+                    target = os.readlink(part, dir_fd=fd)
+                    path = Path(
+                        os.path.normpath(
+                            str(Path("/", *walked) / target / Path(*parts[index + 1 :]))
+                        )
+                    )
+                    break
+                child = os.open(part, flags, dir_fd=fd)
+                actual = os.fstat(child)
+                os.close(fd)
+                fd = child
+                sticky = (
+                    actual.st_uid == 0 and actual.st_mode & stat.S_ISVTX and (not last or not owned)
+                )
+                if (actual.st_dev, actual.st_ino) != (info.st_dev, info.st_ino) or (
+                    actual.st_uid not in (0, os.getuid())
+                    or (last and owned and actual.st_uid != os.getuid())
+                    or (actual.st_mode & 0o022 and not sticky)
+                    or (last and private and actual.st_mode & 0o077)
+                ):
+                    raise Failure("unsafe_directory_path", 5)
+                walked.append(part)
+            else:
+                bound = Path("/", *walked)
+                actual, final = os.fstat(fd), bound.lstat()
+                if (
+                    not stat.S_ISDIR(final.st_mode)
+                    or (actual.st_dev, actual.st_ino) != (final.st_dev, final.st_ino)
+                    or (owned and actual.st_uid != os.getuid())
+                    or (private and actual.st_mode & 0o077)
+                ):
+                    raise Failure("unsafe_directory_path", 5)
+                return bound
+        except OSError:
+            raise Failure("unsafe_directory_path", 5) from None
+        finally:
+            os.close(fd)
+    raise Failure("unsafe_directory_path", 5)
+
+
 def secure_path(path, boundary):
     path, boundary = Path(path).absolute(), Path(boundary).absolute()
+    if ".." in path.parts or ".." in boundary.parts:
+        raise Failure("path_outside_source_root", 5)
     try:
         relative = path.relative_to(boundary)
     except ValueError:
         raise Failure("path_outside_source_root", 5) from None
+    try:
+        boundary = trusted_directory(boundary)
+    except Failure:
+        raise Failure("unsafe_artifact_owner_or_link", 5) from None
+    path = boundary / relative
     current = boundary
     for part in (None, *relative.parts):
         if part is not None:

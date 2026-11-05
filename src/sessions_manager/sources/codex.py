@@ -1,7 +1,15 @@
 from pathlib import Path
 
 from ..models import Capability, Failure, Session, timestamp
-from .base import RECORD_ERRORS, ScanResult, fingerprint, json_lines, resume_capability
+from .base import (
+    RECORD_ERRORS,
+    ScanResult,
+    available_root,
+    discover_paths,
+    fingerprint,
+    json_lines,
+    resume_capability,
+)
 from .sqlite_reader import NativeSQLite
 
 
@@ -15,7 +23,7 @@ class Adapter:
         root = self.root
         path = root.path / "state_5.sqlite"
         result = ScanResult(profile=self.profile)
-        if not root.path.exists():
+        if not available_root(root.path, result):
             return result
         if path.exists():
             stamps = {
@@ -82,7 +90,7 @@ class Adapter:
                 except RECORD_ERRORS:
                     result.complete, result.reason = False, "invalid_native_record"
         else:
-            for locator in sorted((root.path / "sessions").rglob("*.jsonl")):
+            for locator in discover_paths(root.path / "sessions", "**/*.jsonl", result):
                 try:
                     _, row = next(json_lines(locator, cache=getattr(self, "jsonl_cache", None)))
                     meta = row.get("payload", {})
@@ -150,6 +158,7 @@ class Adapter:
 
         events = {}
         state = "complete"
+        native_events = False
         db = self.root.path / "thread_history_1.sqlite"
         try:
             if not hasattr(self, "_projection"):
@@ -209,11 +218,15 @@ class Adapter:
                         if not native:
                             state = "partial"
                             continue
-                        if native in events:
-                            continue
-                        event = self._item(
+                        checked = self._item(
                             session, payload, native, ordinal, timestamp(row.get("timestamp"))
                         )
+                        native_events = native_events or (
+                            checked is not None and checked.completeness == "complete"
+                        )
+                        if native in events:
+                            continue
+                        event = checked
                         if event:
                             events[native] = event
                             if event.completeness != "complete":
@@ -238,6 +251,7 @@ class Adapter:
             for key, path in observed.items()
         ):
             state = "partial"
+        session._native_history_verified = native_events and state == "complete"
         return HistoryResult(sorted(events.values(), key=lambda e: (e.ordinal, e.event_uid)), state)
 
     def _item(self, session, item, native, ordinal, created):

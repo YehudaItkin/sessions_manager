@@ -34,3 +34,34 @@ def test_cleanup_preview_confirm_restore_and_purge(isolated, tmp_path):
     result = runner.invoke(app, [*base, "trash", "restore", trash, "--confirm", token])
     assert result.exit_code == 0, result.output
     assert path.exists()
+
+
+def test_pending_terminal_cleanup_returns_failure_exit(isolated, monkeypatch):
+    from types import SimpleNamespace
+
+    import sessions_manager.cli as cli
+
+    config, data = isolated
+    result = {
+        "operation_id": "op",
+        "items": [
+            {
+                "target_id": "t-test",
+                "state": "purged",
+                "cleanup_pending": True,
+                "error": "io_error",
+                "recovery_options": ["retry_same_confirmation"],
+            }
+        ],
+    }
+    service = SimpleNamespace(
+        commit=lambda *a, **kw: result,
+        retry=lambda *a, **kw: result,
+        catalog=SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(cli, "cleanup_service", lambda obj: service)
+    base = ["--config", str(config), "--data-dir", str(data), "--format", "json"]
+    for args in (["trash", "purge", "t-test", "--confirm", "token"], ["trash", "retry", "op"]):
+        response = CliRunner().invoke(app, [*base, *args])
+        assert response.exit_code != 0
+        assert json.loads(response.stdout)["data"]["items"][0]["state"] == "purged"

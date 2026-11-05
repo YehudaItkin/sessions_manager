@@ -1,7 +1,9 @@
 from ..models import Capability, Failure, Session, timestamp
 from .base import (
     ScanResult,
+    available_root,
     directory_inventory,
+    discover_paths,
     fingerprint,
     json_file,
     read_many,
@@ -17,14 +19,16 @@ class Adapter:
 
     def discover(self):
         result = ScanResult(profile=self.profile)
-        if not self.root.path.exists():
+        if not available_root(self.root.path, result):
             return result
         home = (
             self.root.path / "sessions"
             if (self.root.path / "sessions").is_dir()
             else self.root.path
         )
-        for session in read_many(self._discover_one, sorted(home.glob("*/*/summary.json"))):
+        for session in read_many(
+            self._discover_one, discover_paths(home, "*/*/summary.json", result)
+        ):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"
             else:
