@@ -268,3 +268,9 @@ content-free catalog_record_invalid error without automatic repair or data loss.
 
 All migrations remain confined to the private manager catalog. Existing location rows
 without evidence require rediscovery before multi-location actions can be supported.
+
+The location/owner migration and user_version=2 are committed in one transaction.
+Existing v1 sessions/hidden state/locations are retained. Older v1 binaries reject v2
+from its header before writing, rather than attempting positional inserts with the old
+column count. Downgrade requires a separately retained v1 catalog; use the current binary
+with upgraded catalogs. Foreign/future application/schema IDs remain rejected.

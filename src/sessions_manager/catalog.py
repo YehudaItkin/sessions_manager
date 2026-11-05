@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS locations(
  locator TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY(uid,root_id,locator));
 CREATE TABLE IF NOT EXISTS generations(
  id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(root_id), complete INTEGER, as_of INTEGER);
-PRAGMA user_version=1;
 """
 
 
@@ -75,11 +74,11 @@ class Catalog:
                 raise Failure("catalog_corrupt", 6)
             if (
                 int.from_bytes(header[68:72], "big") != 0x53455353
-                or int.from_bytes(header[60:64], "big") > 1
+                or int.from_bytes(header[60:64], "big") > 2
             ):
                 raise Failure("unsupported_catalog_schema", 4)
         self.connection = sqlite3.connect(self.path, timeout=5)
-        if self.connection.execute("PRAGMA user_version").fetchone()[0] > 1:
+        if self.connection.execute("PRAGMA user_version").fetchone()[0] > 2:
             self.connection.close()
             raise Failure("unsupported_catalog_schema", 4)
         if new:
@@ -104,16 +103,14 @@ class Catalog:
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS jsonl_cursors(root_id TEXT,path TEXT,uid TEXT REFERENCES sessions(uid),payload BLOB,PRIMARY KEY(root_id,path))"
         )
-        for table in ("generations", "locations"):
-            if "payload" not in {
-                r[1] for r in self.connection.execute(f"PRAGMA table_info({table})")
-            }:
-                self.connection.execute(f"ALTER TABLE {table} ADD COLUMN payload TEXT")
-        if "current_trash_id" not in {
-            r[1] for r in self.connection.execute("PRAGMA table_info(sessions)")
-        }:
-            self.connection.execute("ALTER TABLE sessions ADD COLUMN current_trash_id TEXT")
-        self.connection.commit()
+        self.connection.execute("BEGIN IMMEDIATE")
+        with self.writer() as db:
+            for table in ("generations", "locations"):
+                if "payload" not in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN payload TEXT")
+            if "current_trash_id" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
+                db.execute("ALTER TABLE sessions ADD COLUMN current_trash_id TEXT")
+            db.execute("PRAGMA user_version=2")
 
     def _private_sidecars(self):
         for suffix in ("-wal", "-shm"):
