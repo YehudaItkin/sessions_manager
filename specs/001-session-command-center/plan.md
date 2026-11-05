@@ -274,3 +274,34 @@ acceptance. Query changes are manager presentation only; native cleanup/resume l
 remain as recorded. Full/relevant, package and SC-002 warm checks plus documented self-review
 precede the authorized GitHub PR/merge. Simpler alias-only changes were insufficient for
 multi-source controls and discoverability; no separate filter engine is introduced.
+
+
+## Convergence implementation decisions — 2026-11-05
+
+T126–T139 retain the original architecture and add only manager-owned state.
+Bounded readers publish an early metadata phase before optional history/usage,
+with one caller/writer publishing each phase. Additive generation payloads record
+actual reader start/end, completeness and source fingerprint ranges. Interrupted
+phases never prune unseen locations or claim complete search/usage.
+
+History stores logical native identities separately from content revisions.
+Memberships retain per-session context; conflicting revisions remain distinct and
+explicitly partial, preserving each session's search index and logical message
+counts. The normalizer version forces reindexing of old caches.
+
+JSONL parser checkpoints store compressed whitelisted records in the private
+catalog, associated with the owning session and root. This reuses the established
+normalizers for streaming, receipts and compaction. The simpler alternative of
+normalized-state-only cursors would require three parallel incremental parsers
+with independent streaming/usage recovery semantics. Extra private storage and
+one prefix verification pass are the tradeoffs. Native dev/inode, offset,
+normalizer/profile version and SHA-256 prefix must match before tail decoding;
+replacement, truncation, corruption or drift rebuilds. This optimizes JSON
+parsing, not total disk bytes: the old prefix is read to prove it is unchanged.
+Purge removes the selected session's checkpoint; neighboring checkpoints remain.
+
+Public CLI changes are additive: overview handles/matches and actions, literal
+original-text match context, statistics selection and activity range, and Cursor
+context-only counters. The all-session statistics default remains unchanged.
+Native mutation guards are retained; shared Grok feasibility is concluded as
+unavailable, and Warp runtime remains externally blocked rather than passing.

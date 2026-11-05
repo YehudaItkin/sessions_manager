@@ -68,3 +68,21 @@ def test_foreign_and_future_catalog_are_never_migrated(tmp_path):
     with pytest.raises(Failure, match="unsupported_catalog"):
         Catalog(own)
     assert (own / "catalog.sqlite3").read_bytes() == before
+
+
+def test_invalid_persisted_session_fails_safely_without_rewriting(tmp_path):
+    import pytest
+
+    from sessions_manager.models import Failure
+
+    root = SourceRoot.create("claude", tmp_path / "native")
+    session = Session.build(root, "one", root.path / "one")
+    with Catalog(tmp_path / "data") as catalog:
+        catalog.publish(root, [session], complete=True)
+        catalog.connection.execute(
+            "UPDATE sessions SET payload=json_set(payload,'$.presence','invalid-private-value')"
+        )
+        catalog.connection.commit()
+        with pytest.raises(Failure, match="catalog_record_invalid"):
+            catalog.sessions()
+        assert catalog.connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1

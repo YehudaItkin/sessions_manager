@@ -34,7 +34,8 @@ def test_foreground_child_and_changed_source(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tui_resume_returns_same_selection(isolated, tmp_path, monkeypatch):
+@pytest.mark.parametrize("exit_code", [0, 7, 130])
+async def test_tui_resume_returns_same_selection(isolated, tmp_path, monkeypatch, exit_code):
     import sys
     from contextlib import contextmanager
 
@@ -47,7 +48,7 @@ async def test_tui_resume_returns_same_selection(isolated, tmp_path, monkeypatch
     native = tmp_path / "native"
     make(native)
     binary = tmp_path / "child"
-    binary.write_text(f"#!{sys.executable}\nraise SystemExit(0)\n")
+    binary.write_text(f"#!{sys.executable}\nraise SystemExit({exit_code})\n")
     binary.chmod(0o700)
     root = SourceRoot.create("claude", native, resume_context="native", executable_path=binary)
     cfg = Config(data, config, [root], "replace")
@@ -62,6 +63,8 @@ async def test_tui_resume_returns_same_selection(isolated, tmp_path, monkeypatch
     with Catalog(data) as catalog:
         refresh(cfg, catalog)
         app = SessionsApp(cfg, catalog)
+        notices = []
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(str(message)))
         monkeypatch.setattr(app, "suspend", suspend)
         async with app.run_test() as pilot:
             uid = app.selected_uid()
@@ -69,6 +72,10 @@ async def test_tui_resume_returns_same_selection(isolated, tmp_path, monkeypatch
             await pilot.pause()
             assert suspended == [True]
             assert app.selected_uid() == uid
+            if exit_code:
+                assert str(exit_code) in notices[-1]
+            if exit_code == 130:
+                assert "interrupt" in notices[-1].lower()
 
 
 def test_json_resume_has_one_stdout_envelope(isolated, tmp_path):

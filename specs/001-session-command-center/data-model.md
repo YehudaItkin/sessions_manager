@@ -229,3 +229,22 @@ requested -> expired / delivery_failed.
 URI delivered не равно claimed, а handoff_attempted не равно conversation_loaded.
 Удаляются только manager-owned launch artifacts после завершения/expiry, не session trash.
 Подробности — [launch contract](contracts/launch.md).
+
+
+## Convergence storage amendment — 2026-11-05
+
+- events.logical_uid separates native event identity from content-revision keys;
+  per-membership context and immutable revision bodies prevent fork mixing.
+- generations.payload adds actual started_at/finished_at, enumeration/history/
+  search/usage completeness and source revision ranges. Older rows can remain null.
+- jsonl_cursors(root_id,path,uid,payload) is a private parser cache. The compressed
+  payload contains only whitelisted supported JSONL fields, version, fingerprint,
+  confirmed newline offset/ordinal and SHA-256 prefix. It follows the owning
+  session's retention; purge removes it when purging that cached session.
+- ContextMetric adds source_profile, root/source revision, observation time and
+  completeness. Unknown counters remain null and never become lifetime receipts.
+
+Migrations are additive and affect only the manager catalog. Normalizer 3 rebuilds
+old history/search caches from configured native sources; unknown or unavailable
+sources remain explicitly partial/stale. Invalid persisted model values raise a
+content-free catalog_record_invalid error without automatic repair or data loss.

@@ -142,9 +142,16 @@ def launch_current(request, *, output_to_stderr=False):
     except OSError:
         raise Failure("native_exec_failed", 8) from None
     except KeyboardInterrupt:
-        return {"launch_id": request.launch_id, "state": "child_exited", "child_exit_code": 130}
+        code = 130
+    else:
+        code = result.returncode
     return {
         "launch_id": request.launch_id,
         "state": "child_exited",
-        "child_exit_code": result.returncode,
+        "child_exit_code": code,
+        "message": "Native CLI interrupted (130)."
+        if code == 130
+        else f"Native CLI exited with code {code}."
+        if code
+        else "Native CLI exited successfully.",
     }

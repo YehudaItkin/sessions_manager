@@ -1,8 +1,137 @@
+import json
+
+import pytest
+
 from sessions_manager.catalog import Catalog
 from sessions_manager.config import Config
 from sessions_manager.discovery import refresh
 from sessions_manager.models import SourceRoot
 from tests.support.claude_factory import make
+
+
+@pytest.mark.parametrize("provider", ["claude", "grok"])
+def test_bad_optional_preview_or_record_never_discards_healthy_neighbors(
+    isolated, tmp_path, provider
+):
+    from tests.support import grok_factory
+
+    config, data = isolated
+    root = SourceRoot.create(provider, tmp_path / "native")
+    factory = make if provider == "claude" else grok_factory.make
+    broken = factory(root.path, "broken")
+    factory(root.path, "healthy", **({"message_id": "other"} if provider == "claude" else {}))
+    if provider == "claude":
+        records = [json.loads(line) for line in broken.read_text().splitlines()]
+        records[0]["message"]["content"] = [123]
+        broken.write_text("".join(json.dumps(r) + "\n" for r in records))
+    else:
+        (broken / "summary.json").write_text(json.dumps({"info": []}))
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        sessions = {s.native_id: s for s in catalog.sessions()}
+        assert "healthy" in sessions
+        assert sessions["healthy"].history_state == "complete"
+        if provider == "claude":
+            assert "broken" in sessions
+            assert sessions["broken"].preview is None
+            assert sessions["broken"].history_state == "partial"
+        else:
+            assert catalog.root_states()[0]["state"] != "complete"
+
+
+def test_metadata_is_published_before_optional_history_and_has_generation_provenance(
+    isolated, tmp_path, monkeypatch
+):
+    import threading
+
+    from sessions_manager.sources.claude import Adapter
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    make(root.path)
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    metadata_published = threading.Event()
+    original_history = Adapter.read_history
+    original_publish = Catalog.publish
+
+    def checked_history(self, session):
+        assert metadata_published.is_set(), "history began before early metadata publication"
+        return original_history(self, session)
+
+    def observed_publish(self, root, sessions, **kwargs):
+        result = original_publish(self, root, sessions, **kwargs)
+        if sessions and not kwargs.get("histories"):
+            assert self.sessions()[0].search_state != "complete"
+            metadata_published.set()
+        return result
+
+    monkeypatch.setattr(Adapter, "read_history", checked_history)
+    monkeypatch.setattr(Catalog, "publish", observed_publish)
+    with Catalog(data) as catalog:
+        assert refresh(cfg, catalog)[0]["state"] == "complete"
+        assert metadata_published.is_set()
+        rows = catalog.connection.execute(
+            "SELECT payload FROM generations ORDER BY rowid"
+        ).fetchall()
+        assert len(rows) == 2
+        early, final = [json.loads(row[0]) for row in rows]
+        assert early["history"] == "partial"
+        assert final["started_at"] <= final["finished_at"]
+        assert final["history"] == "complete"
+        assert final["source_revision_range"]
+
+
+def test_jsonl_append_cursor_reuses_confirmed_prefix_and_rebuilds_changed_prefix(
+    isolated, tmp_path
+):
+    from tests.support.claude_factory import append
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    path = make(root.path)
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        old_size = path.stat().st_size
+    append(
+        path,
+        {
+            "type": "user",
+            "uuid": "tail",
+            "sessionId": "claude-one",
+            "message": {"content": "new tail needle"},
+            "credential": "must-not-cache",
+        },
+    )
+    with Catalog(data) as catalog:
+        refresh(cfg, catalog)
+        cursor = json.loads(
+            __import__("zlib").decompress(
+                catalog.connection.execute("SELECT payload FROM jsonl_cursors").fetchone()[0]
+            )
+        )
+        assert cursor["audit"]["mode"] == "append_tail"
+        assert cursor["audit"]["validated_prefix_bytes"] == old_size
+        assert cursor["audit"]["decoded_tail_bytes"] == path.stat().st_size - old_size
+        assert "must-not-cache" not in json.dumps(cursor)
+        assert len(catalog.events(catalog.sessions()[0].session_uid)) == 3
+        # In-place prefix modification plus growth must never be mistaken for append.
+        path.write_text(
+            path.read_text().replace("Synthetic Claude question", "changed prefix needle")
+        )
+        refresh(cfg, catalog)
+        cursor = json.loads(
+            __import__("zlib").decompress(
+                catalog.connection.execute("SELECT payload FROM jsonl_cursors").fetchone()[0]
+            )
+        )
+        assert cursor["audit"]["mode"] == "full"
+        assert catalog.matching_ids("changed prefix needle")
+        assert not catalog.matching_ids("Synthetic Claude question")
 
 
 def test_one_usage_failure_keeps_every_session_and_cached_history(isolated, tmp_path, monkeypatch):
@@ -102,6 +231,13 @@ def test_cancel_and_missing_previously_available_root_retains_history(isolated, 
         result = refresh(cfg, catalog, cancel=cancelled)
         assert result[0]["state"] == "partial"
         assert catalog.events(uid) == old_events
+        latest = json.loads(
+            catalog.connection.execute(
+                "SELECT payload FROM generations ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        assert latest["history"] != "complete"
+        assert latest["search"] != "complete"
         shutil.rmtree(root.path)
         result = refresh(cfg, catalog)
         assert result[0]["state"] == "partial"

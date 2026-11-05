@@ -141,3 +141,16 @@ Harmless Warp runtime был запущен на установленной 0.20
 но ticket остался requested и fixture child не стартовал за 20 секунд. Gate FAIL,
 conversation_loaded не заявляется. Computer Use запретил доступ к Warp; обход UI запрета
 не применялся. Native startup state не установлен. Current terminal — рабочая альтернатива.
+
+
+## Convergence safety amendment — 2026-11-05
+
+The Warp launcher directory must be owned by the current user and neither group
+nor world writable. Every existing ancestor must be a trusted directory without
+symlinks or foreign write access; root-owned sticky ancestors protect owned
+children and are permitted. Validation precedes creating directories, tickets,
+configs or opener handoff. Existing paths are never chmodded automatically.
+Missing/non-executable native binaries cannot advertise resume supported.
+Foreground child return includes the exit code and an actionable exit/interruption
+message, and TUI restores the terminal and original stable selection.
+Native Warp runtime gate T113/T130 remains blocked by Computer Use access policy.

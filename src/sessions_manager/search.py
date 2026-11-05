@@ -113,6 +113,14 @@ class QuerySpec:
                 parts.append(f"{label}: {value}")
         return " | ".join(parts)
 
+    def selection(self, session_ids=None):
+        from dataclasses import asdict
+
+        values = asdict(self)
+        values.pop("sort")
+        values.pop("order")
+        return values | {"session_ids": session_ids}
+
     def filter(self, sessions, catalog=None):
         field, order = self.sorting()
         if self.scope not in ("visible", "hidden", "all") or self.activity not in (
@@ -195,3 +203,24 @@ def prepare_chunk(kind, text, original_blob=None):
         else zlib.compress(folded.encode(), 1)
     )
     return kind, stored, candidate_text(folded)
+
+
+def literal_context(text, query, limit=180):
+    """Map casefold offsets back to the original characters (ß, ligatures, etc.)."""
+    from .models import safe_text
+
+    position = text.casefold().find(query.casefold())
+    if position < 0:
+        return None
+    folded_offset, start, end = 0, None, len(text)
+    for index, char in enumerate(text):
+        next_offset = folded_offset + len(char.casefold())
+        if start is None and next_offset > position:
+            start = index
+        if next_offset >= position + len(query.casefold()):
+            end = index + 1
+            break
+        folded_offset = next_offset
+    start = max(0, (start or 0) - min(12, max(0, (limit - (end - (start or 0))) // 2)))
+    end = min(len(text), start + limit)
+    return ("…" if start else "") + safe_text(text[start:end]) + ("…" if end < len(text) else "")

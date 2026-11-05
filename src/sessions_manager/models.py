@@ -13,8 +13,41 @@ from pathlib import Path
 from typing import Any
 
 PROVIDERS = ("codex", "claude", "cursor", "grok")
-NORMALIZER_VERSION = "2/" + unicodedata.unidata_version
+NORMALIZER_VERSION = "3/" + unicodedata.unidata_version
 NAMESPACE = uuid.UUID("7875cdc8-1c78-4bc4-8345-51e66a8c26ef")
+COMPLETENESS = ("complete", "partial", "unavailable", "stale")
+CAPABILITY_NAMES = ("metadata", "history", "search", "resume", "usage", "cleanup")
+OPERATION_STATES = (
+    "preview",
+    "restore_preview",
+    "purge_preview",
+    "backup_ready",
+    "removing",
+    "restoring",
+    "purging",
+    "trashed",
+    "restored",
+    "purged",
+    "failed_no_change",
+    "recovery_required",
+    "conflict",
+    "cancelled",
+)
+
+
+def _identifier(value):
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        raise ValueError("invalid identifier")
+
+
+def _absolute_path(value):
+    if not isinstance(value, (str, Path)) or "\0" in str(value) or not Path(value).is_absolute():
+        raise ValueError("absolute path required")
+
+
+def _milliseconds(value, *, optional=False):
+    if not (value is None and optional) and type(value) is not int:
+        raise ValueError("invalid UTC milliseconds")
 
 
 def now_ms() -> int:
@@ -96,10 +129,7 @@ class Capability:
 
 
 def capabilities():
-    return {
-        key: Capability("unavailable", "not_verified")
-        for key in ("metadata", "history", "search", "resume", "usage", "cleanup")
-    }
+    return {key: Capability("unavailable", "not_verified") for key in CAPABILITY_NAMES}
 
 
 @dataclass
@@ -118,6 +148,17 @@ class SourceRoot:
     resume_context: str | None = None
     health: str = "unknown"
     last_scan_id: str | None = None
+
+    def __post_init__(self):
+        for value in (self.root_id, self.namespace_id):
+            _identifier(value)
+        if self.provider not in PROVIDERS:
+            raise ValueError("invalid provider")
+        _absolute_path(self.path)
+        self.path = Path(self.path)
+        if self.executable_path is not None:
+            _absolute_path(self.executable_path)
+            self.executable_path = Path(self.executable_path)
 
     @classmethod
     def create(cls, provider, path, namespace="default", **kwargs):
@@ -142,6 +183,17 @@ class SessionLocation:
     completeness: str = "complete"
     status: str = "preferred"
 
+    def __post_init__(self):
+        _identifier(self.session_uid)
+        _identifier(self.root_id)
+        _absolute_path(self.locator)
+        if self.completeness not in COMPLETENESS or self.status not in (
+            "preferred",
+            "alias",
+            "conflict",
+        ):
+            raise ValueError("invalid location state")
+
 
 @dataclass
 class Project:
@@ -149,6 +201,12 @@ class Project:
     cwd: str
     display_name: str
     path_available: bool
+
+    def __post_init__(self):
+        _identifier(self.project_id)
+        _absolute_path(self.cwd)
+        if not isinstance(self.display_name, str) or type(self.path_available) is not bool:
+            raise ValueError("invalid project")
 
 
 @dataclass
@@ -162,6 +220,16 @@ class ActivityEvidence:
     resolved_executable: str | None = None
     confidence: str = "unknown"
 
+    def __post_init__(self):
+        _identifier(self.session_uid)
+        if self.status not in ("active", "inactive", "unknown"):
+            raise ValueError("invalid activity state")
+        _milliseconds(self.observed_at)
+        if self.pid is not None and (type(self.pid) is not int or self.pid <= 0):
+            raise ValueError("invalid process identity")
+        if self.resolved_executable is not None:
+            _absolute_path(self.resolved_executable)
+
 
 @dataclass
 class ScanGeneration:
@@ -173,10 +241,30 @@ class ScanGeneration:
     enumeration: str = "unavailable"
     history: str = "unavailable"
     search: str = "unavailable"
+    usage: str = "unavailable"
     source_revision_range: list = field(default_factory=list)
     reader_version: str = "1"
     normalizer_version: str = NORMALIZER_VERSION
     diagnostics: list = field(default_factory=list)
+
+    def __post_init__(self):
+        _identifier(self.scan_id)
+        _identifier(self.root_id)
+        if self.state not in ("running", "complete", "partial", "cancelled", "failed"):
+            raise ValueError("invalid scan state")
+        if any(
+            value not in COMPLETENESS
+            for value in (self.enumeration, self.history, self.search, self.usage)
+        ):
+            raise ValueError("invalid scan completeness")
+        _milliseconds(self.started_at)
+        _milliseconds(self.finished_at, optional=True)
+        if self.finished_at is not None and self.finished_at < self.started_at:
+            raise ValueError("invalid scan time range")
+        if not isinstance(self.source_revision_range, list) or not isinstance(
+            self.diagnostics, list
+        ):
+            raise ValueError("invalid scan provenance")
 
 
 @dataclass
@@ -212,6 +300,36 @@ class Session:
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self):
+        for value in (self.session_uid, self.display_id, self.namespace_id, self.root_id):
+            _identifier(value)
+        if (
+            self.provider not in PROVIDERS
+            or self.presence
+            not in ("present", "source_unavailable", "missing", "trashed", "purged")
+            or self.activity not in ("active", "inactive", "unknown")
+        ):
+            raise ValueError("invalid session state")
+        if any(
+            value not in COMPLETENESS
+            for value in (self.history_state, self.search_state, self.usage_state)
+        ):
+            raise ValueError("invalid session completeness")
+        if type(self.hidden) is not bool:
+            raise ValueError("invalid visibility")
+        if self.timezone_confidence not in ("known", "unknown", "ambiguous"):
+            raise ValueError("invalid timezone confidence")
+        if any(
+            not isinstance(value, dict)
+            for value in (self.extra, self.fingerprint, self.activity_evidence, self.capabilities)
+        ):
+            raise ValueError("invalid session attributes")
+        if set(self.capabilities) != set(CAPABILITY_NAMES) or any(
+            not isinstance(value, Capability) for value in self.capabilities.values()
+        ):
+            raise ValueError("invalid session capabilities")
+        _absolute_path(self.locator)
+        if self.cwd is not None:
+            _absolute_path(self.cwd)
         for key in ("title", "preview", "cwd", "model", "native_id"):
             if getattr(self, key) is not None and not isinstance(getattr(self, key), str):
                 raise ValueError("invalid metadata type")
@@ -246,10 +364,15 @@ class Session:
     @classmethod
     def from_dict(cls, data):
         data = dict(data)
+        stored = data.get("capabilities", {})
+        if not isinstance(stored, dict):
+            raise ValueError("invalid session capabilities")
         data["capabilities"] = {
-            k: Capability(**v) if isinstance(v, dict) else v
-            for k, v in data.get("capabilities", {}).items()
+            k: Capability(**v) if isinstance(v, dict) else v for k, v in stored.items()
         }
+        for key in CAPABILITY_NAMES:
+            if key not in data["capabilities"]:
+                data["capabilities"][key] = Capability("unavailable", "not_verified")
         return cls(**data)
 
 
@@ -402,6 +525,19 @@ class OperationItem:
     recovery_options: list[str] = field(default_factory=list)
     updated_at: int = field(default_factory=now_ms)
 
+    def __post_init__(self):
+        _identifier(self.operation_id)
+        _identifier(self.target_id)
+        if self.action not in ("trash", "restore", "purge") or self.state not in OPERATION_STATES:
+            raise ValueError("invalid operation item")
+        _milliseconds(self.updated_at)
+        if self.trash_id is not None and not re.fullmatch(r"t-[a-f0-9-]{36}", self.trash_id):
+            raise ValueError("invalid trash identity")
+        if not isinstance(self.recovery_options, list) or any(
+            not isinstance(value, str) for value in self.recovery_options
+        ):
+            raise ValueError("invalid recovery options")
+
 
 @dataclass
 class CleanupBundle:
@@ -475,12 +611,19 @@ class ContextMetric:
     used_tokens: int | None
     max_tokens: int | None
     kind: str = "context"
+    source_profile: str | None = None
+    native_revision: dict = field(default_factory=dict)
+    observed_at: int = field(default_factory=now_ms)
+    completeness: str = "complete"
 
     def __post_init__(self):
         counter(self.used_tokens)
         counter(self.max_tokens)
         if self.kind != "context":
             raise ValueError("invalid context metric")
+        _milliseconds(self.observed_at)
+        if self.completeness not in COMPLETENESS:
+            raise ValueError("invalid context completeness")
 
 
 @dataclass

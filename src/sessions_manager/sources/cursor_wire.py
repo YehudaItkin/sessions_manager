@@ -5,6 +5,32 @@ from ..models import Failure, HistoryEvent, HistoryResult, identity
 MAX_BLOB = 32 * 1024 * 1024
 
 
+def context_details(blob):
+    # agent.v1.ConversationStateStructure field 5 -> ConversationTokenDetails;
+    # fields 1/2 are uint32 used_tokens/max_tokens in the installed descriptor.
+    root = fields(blob)
+    if 8 not in root:
+        raise Failure("cursor_context_unknown_shape", 4)
+    if 5 not in root:
+        return None
+    if len(root[5]) != 1:
+        raise Failure("cursor_context_unknown_shape", 4)
+    details = fields(root[5][0])
+    values = []
+    for number in (1, 2):
+        if number not in details:
+            values.append(None)
+            continue
+        if (
+            len(details[number]) != 1
+            or type(details[number][0]) is not int
+            or not (0 <= details[number][0] <= 0xFFFFFFFF)
+        ):
+            raise Failure("cursor_context_unknown_shape", 4)
+        values.append(details[number][0])
+    return values if any(value is not None for value in values) else None
+
+
 def fields(blob):
     if not isinstance(blob, bytes) or len(blob) > MAX_BLOB:
         raise Failure("cursor_wire_limit", 4)

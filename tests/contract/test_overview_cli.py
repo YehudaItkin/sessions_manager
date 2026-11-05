@@ -51,6 +51,38 @@ def test_table_output_has_named_id_columns(isolated, tmp_path):
     assert "claude-one" in result.output
 
 
+def test_handles_are_global_before_pagination_and_hidden_filter(isolated, tmp_path):
+    from sessions_manager.catalog import Catalog
+    from sessions_manager.models import Session, SourceRoot, short_handles
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    config.write_text(
+        'discovery_roots_mode="replace"\n[[sources]]\nprovider="claude"\npath='
+        + repr(str(root.path))
+        + "\n"
+    )
+    first = Session.build(root, "one", root.path / "one")
+    other = Session.build(root, "two", root.path / "two", hidden=True)
+    first.session_uid = "12345678-aaaa-4000-8000-000000000001"
+    other.session_uid = "12345678-bbbb-4000-8000-000000000002"
+    for session in (first, other):
+        session.display_id = "s-" + session.session_uid
+    with Catalog(data) as catalog:
+        catalog.publish(root, [first, other], complete=True)
+        handle = short_handles(catalog.sessions(include_missing=True))[first.session_uid]
+        assert catalog.get(handle).session_uid == first.session_uid
+    result = CliRunner().invoke(
+        app,
+        ["--config", str(config), "--data-dir", str(data), "list", "--limit", "1"],
+        env={"COLUMNS": "240"},
+    )
+    assert result.exit_code == 0, result.output
+    assert handle in result.output
+    assert "Actions" in result.output
+    assert "unknown" in result.output
+
+
 def test_initial_selected_refresh_does_not_touch_other_roots(isolated, tmp_path):
     import tomli_w
 

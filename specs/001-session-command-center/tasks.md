@@ -1076,7 +1076,7 @@ documentation gates T099–T102 обязательны для всей feature.
 - [X] T116 Update spec/contracts/research and validation, run relevant/full/package/performance gates, and publish reviewed changes through GitHub.
 
 Remaining native capabilities (not silently marked implemented):
-- [ ] T117 Design/verify scoped local Grok shared-index cleanup and restore; current native local directories plus session_search.sqlite/grok.db are intentionally unavailable for trash. Remote delete and direct shared DB mutation remain excluded.
+- [X] T117 Design/verify scoped local Grok shared-index cleanup and restore; current native local directories plus session_search.sqlite/grok.db are intentionally unavailable for trash. Remote delete and direct shared DB mutation remain excluded. Feasibility assessment completed by T139: the current native primitives cannot provide bounded reversible shared-index cleanup; capability stays unavailable.
 - [ ] T118 Enable Codex cleanup only after a native API can bind exact confirmed descendant closure/revision and recovery. Current threadId-only cascade API does not satisfy this gate.
 
 ## Filtering and sorting — 2026-11-04
@@ -1088,3 +1088,68 @@ Remaining native capabilities (not silently marked implemented):
 - [X] T123 Preserve stable row/batch selection across sort; remove invisible batch targets after filtering; verify invalid inputs, reset, refresh and existing lifecycle actions.
 - [X] T124 Update README/contracts/validation, run relevant/full/packaging and SC-002 warm checks; record constitutional/privacy/compatibility self-review.
 - [X] T125 Publish and merge reviewed filtering/sorting changes through GitHub, sync local main; retain independent native capability tasks T113/T117/T118.
+
+
+## Phase 9: Convergence
+
+Assessment: 2026-11-05. Findings F1–F14 cover the current implementation against the spec, plan, existing tasks and constitution. Existing tasks and completion claims above are retained unchanged. Behavioral fixes below start with an observed failing synthetic regression, then the smallest implementation and relevant checks; native runtime gates remain opt-in and use disposable histories.
+
+- [X] T126 **CRITICAL** [F1] Закрыть небезопасный путь создания Warp launcher per Constitution IV, FR-025, T053/T058 (contradicts).
+  Файлы: `src/sessions_manager/warp.py`, `tests/unit/test_warp.py`, `tests/acceptance/test_warp.py`.
+  До создания ticket/config и вызова opener проверять владельца, тип, symlink и group/world-writable permissions каталога launcher и доверенность его родительского пути. Существующий owned-каталог с mode 0777 сейчас принимается. Отклонять небезопасный путь с понятной причиной, не менять права чужих существующих каталогов. Проверить writable directory/ancestor, symlink и отсутствие ticket/config/handoff при отказе; сохранить штатный приватный путь и one-shot semantics.
+
+- [X] T127 **HIGH** [F2] Повторно сверять подтверждённый cleanup plan с актуальной полной целью непосредственно перед mutation per FR-014, FR-015, FR-019, T076/T079 (contradicts).
+  Файлы: `src/sessions_manager/cleanup.py`, `tests/acceptance/test_cleanup.py`, `tests/integration/test_cleanup_recovery.py`.
+  Помимо fingerprints перечисленных файлов пересчитывать поддержанный native bundle/profile и проверять неизменность полного набора артефактов; сверять сохранённый entry_digest и состояние записи при restore/purge. Новый companion после preview либо изменённая запись корзины должны требовать нового preview до первого изменения. Проверить соседей и отказ без потери данных; сохранить идемпотентное продолжение собственного durable journal после частичного выполнения.
+
+- [X] T128 **HIGH** [F3] Согласованно обновлять общие history events и поисковые chunks всех затронутых сессий per FR-004, FR-006, FR-007, T041/T047 (contradicts).
+  Файлы: `src/sessions_manager/catalog.py`, `tests/integration/test_history_catalog.py`, `tests/integration/test_search_index.py`.
+  Сейчас UPSERT общего event_uid меняет отображаемую историю соседней сессии, но её индекс остаётся прежним. Различать подтверждённую ревизию общего события и конфликт идентичности; атомарно согласовывать memberships/history/search либо явно отмечать конфликт/partial, не смешивая истории молча. Покрыть копии, fork, повторный scan и изменение общего event; найденный текст должен соответствовать отображаемой истории каждой сессии.
+
+- [X] T129 **HIGH** [F4] Изолировать повреждённые metadata/preview/history records в каждом source adapter per FR-009, FR-026, T104 (partial).
+  Файлы: `src/sessions_manager/sources/claude.py`, `src/sessions_manager/sources/grok.py`, `src/sessions_manager/discovery.py` и соответствующие source contract tests.
+  Воспроизвести Grok info=[] и Claude message.content=[123] рядом с корректной сессией одного root. Проверять форму данных на границе отдельной записи, сохранять доступные метаданные при отказе optional preview/history, явно отражать partial/unavailable и продолжать чтение здоровых соседей. Аналогично проверить границы остальных adapters; не маскировать отказ всего источника пустым успешным результатом и не терять cached sessions.
+
+- [ ] T130 **HIGH** [F5] Завершить незакрытый harmless Warp runtime gate T113 per US3/AC2, FR-010, FR-011, SC-004 и plan: Warp launch decision (partial).
+  Файлы: `tests/acceptance/test_warp_runtime.py`, `src/sessions_manager/warp.py`, `specs/001-session-command-center/validation.md`.
+  На изолированном disposable fixture проверить реальный documented Tab Config transport, claim единственного ticket, exact argv/cwd и безвредный дочерний процесс; URI delivery не считать запуском. При воспроизведении сбоя исправлять transport под regression test. При недоступном native runtime или ограничении доступа записать точную внешнюю блокировку и сохранить явный unverified/failed outcome, не отмечать gate passing; не открывать личные AI conversations, не обходить ограничения UI и не делать автоматический повторный/new-session запуск.
+
+  **BLOCKED 2026-11-05:** Computer Use denied access to dev.warp.Warp-Stable for safety reasons. T113/runtime remains unverified; no alternate UI/shell path was attempted.
+
+- [X] T131 **HIGH** [F6] Согласовать resume capability с доступностью executable и объяснять исход дочернего CLI в TUI per FR-009, FR-011, US1/AC3, T056/T060 (partial).
+  Файлы: `src/sessions_manager/sources/base.py`, `src/sessions_manager/launch.py`, `src/sessions_manager/ui/app.py`, `tests/contract/test_resume_commands.py`, `tests/acceptance/test_resume.py`.
+  Missing/non-executable настроенный CLI не должен объявляться supported только из-за непустого executable_path; повторно проверять его перед запуском. После возврата в TUI показывать понятное сообщение для nonzero exit и interruption, сохраняя terminal state и selection. Проверить удалённый executable, отказ запуска и harmless child exits без изменения native histories и без fallback в новую сессию.
+
+- [X] T132 **HIGH** [F7] Показывать контекст literal search match в результатах CLI/TUI per US2/AC2, FR-006, T039/T049 (missing).
+  Файлы: `src/sessions_manager/catalog.py`, `src/sessions_manager/search.py`, `src/sessions_manager/cli.py`, `src/sessions_manager/ui/app.py`, `tests/integration/test_search_index.py`, `tests/acceptance/test_history.py`.
+  Для совпадения только внутри сообщения вернуть ограниченный фрагмент с происхождением и вывести его вместо нерелевантного постоянного preview результата; исходный title/preview не перезаписывать. Проверить casefold с изменением длины Unicode, literal %/_, длинное сообщение, pagination и inert terminal/control text. Фрагмент должен соответствовать реально найденной истории; incomplete index остаётся явно incomplete.
+
+- [X] T133 **HIGH** [F8] Сделать CLI overview однозначным и полным на всех страницах per FR-003, US1/AC1, T022/T031/T032 (partial).
+  Файлы: `src/sessions_manager/cli.py`, `src/sessions_manager/selection.py`, `tests/contract/test_overview_cli.py`, `tests/acceptance/test_overview.py`.
+  Вычислять короткие manager handles относительно всего selectable catalog до pagination/фильтрации, чтобы каждый отображённый handle однозначно разрешался тем же selector. Добавить доступные действия и явное unknown для отсутствующего title/preview без потери native ID/source/project/activity. Проверить коллизию префиксов на разных страницах/вне фильтра; полные JSON IDs сохранить.
+
+- [X] T134 **HIGH** [F9] Сделать фактическую выборку статистики и временные границы явными per FR-020, FR-021, US5/AC4, T089/T097/T098 (partial).
+  Файлы: `src/sessions_manager/statistics.py`, `src/sessions_manager/cli.py`, `src/sessions_manager/ui/app.py`, `src/sessions_manager/ui/screens.py`, `tests/unit/test_statistics.py`, `tests/acceptance/test_statistics.py`.
+  Возвращать и показывать применённые source/project/model/activity/date/visibility filters и известные start/end activity range наряду с elapsed span. Предоставить явный scope choice в TUI и соблюдать его; сохранить согласованный default all, включая hidden и исключая trash. Проверить CLI/TUI scopes, unknown endpoints и выбранные sessions вне текущего overview. Сохранить lifetime-семантику выбранных сессий: фильтр последней активности не превращать в расход токенов за период.
+
+- [X] T135 **MEDIUM** [F10] Реализовать раннюю публикацию metadata и полную provenance scan generations per plan: metadata-first/generation decisions, FR-026, T010/T012/T030/T031 (partial).
+  Файлы: `src/sessions_manager/discovery.py`, `src/sessions_manager/catalog.py`, `src/sessions_manager/models.py`, `src/sessions_manager/ui/app.py`, `tests/integration/test_discovery.py`.
+  Не задерживать доступный обзор до завершения history/usage всех roots. Публиковать ранние метаданные и завершённые roots с явными pending/partial/complete состояниями history/search/usage, start/finish и source revision/as_of ranges. Сохранить bounded workers, одного writer, согласованную публикацию, cancellation и cached/stale semantics. Искусственно медленный reader должен доказать ранний обзор без ложного complete поиска или статистики.
+
+- [X] T136 **MEDIUM** [F11] Читать только подтверждённый новый JSONL tail при append per plan: source revisions/confirmed-tail decision, T047/T096 (contradicts).
+  Файлы: `src/sessions_manager/sources/claude.py`, `src/sessions_manager/sources/grok.py`, `src/sessions_manager/sources/codex.py`, `src/sessions_manager/discovery.py`, `src/sessions_manager/catalog.py` и соответствующие history/usage tests.
+  Сохранять проверяемую позицию ingestion и корректно объединять новые history/usage records вместо полного перечитывания изменившегося файла. При замене, усечении, несовместимой схеме или неподтверждённом префиксе безопасно пересобирать соответствующую историю. Тестами измерить границу реально прочитанных данных и проверить incomplete final record, dedup, пересборку search/ledger и unchanged-file reuse; не ослаблять SC-002.
+
+- [X] T137 **MEDIUM** [F12] Завершить валидацию обязательных полей typed models на границах создания и десериализации per T004/T010/T070 и plan: typed value validation (partial).
+  Файлы: `src/sessions_manager/models.py`, `tests/unit/test_models.py`, `tests/unit/test_cleanup_models.py`, `tests/unit/test_history_models.py`.
+  Проверить недостающие enum/state, identifiers, timestamps/ranges и paths в Session, ActivityEvidence, ScanGeneration и OperationItem там, где их требует контракт; absolute path требовать только для полей с таким контрактом. Invalid presence/activity evidence сейчас принимаются. Добавить positive/negative boundary cases и безопасную обработку некорректных persisted payloads, сохраняя чтение существующих корректных private catalogs и явное unknown вместо выдуманных значений.
+
+- [X] T138 **MEDIUM** [F13] Реализовать подтверждённые Cursor context-only metrics per FR-020, FR-022, T087/T094 (partial).
+  Файлы: `src/sessions_manager/sources/cursor.py`, `tests/contract/test_cursor_usage.py`, `tests/support/cursor_factory.py`.
+  Проверить поддержанную native форму usedTokens/maxTokens на synthetic fixture и при доказанных данных возвращать отдельный kind=context с provenance/completeness; unconditional not_recorded не должен скрывать известную context occupancy. Lifetime input/output/total остаются null с причиной, context нельзя суммировать как lifetime spend. Проверить известный ноль, отсутствующие/некорректные поля и unknown schema; исключить billing/network queries, token estimates, decryption и копирование секретов.
+
+- [X] T139 **MEDIUM** [F14] Завершить проверку осуществимости scoped local Grok shared-index cleanup и restore per T117, FR-015, FR-016 и plan: bounded cleanup decision (partial).
+  Файлы: `src/sessions_manager/sources/grok.py`, `tests/contract/test_grok_cleanup.py`, `tests/integration/test_cleanup_recovery.py`, `specs/001-session-command-center/research.md`, `specs/001-session-command-center/contracts/cleanup.md`.
+  Сначала доказать exact target/profile/revision, принадлежность shared-index artifacts, защиту соседей и восстановление после каждого сбоя на isolated fixture. Включать mutation только для доказанного bounded reversible profile; если native primitives этого не позволяют, документировать проверенную причину блокировки и оставлять capability unavailable. Remote delete, прямые shared DB mutations и whole-DB rollback исключены. Условную Codex задачу T118 и её native cascade/recovery guard сохранить: отсутствие требуемого API не обходить.
+
+Path clarification for T133: `short_handles` is implemented in `src/sessions_manager/models.py`; selector resolution is `Catalog.get` in `src/sessions_manager/catalog.py`. Use these existing modules in place of the mistaken `src/sessions_manager/selection.py` reference above.

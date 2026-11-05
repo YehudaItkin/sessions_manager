@@ -128,7 +128,7 @@ def emit(options, result):
         data = result["data"]
         if result["kind"] in ("list", "refresh"):
             rows = [Session.from_dict(row) for row in data["items"]]
-            handles = short_handles(rows)
+            handles = data.get("handles") or short_handles(rows)
             table = Table(
                 "Manager ID",
                 "Native ID",
@@ -137,6 +137,7 @@ def emit(options, result):
                 "Project",
                 "Last activity",
                 "Activity",
+                "Actions",
                 expand=True,
                 box=None,
                 padding=(0, 1),
@@ -147,18 +148,32 @@ def emit(options, result):
             table.columns[1].min_width = 10
             table.columns[1].no_wrap = True
             for row in rows:
+                match = data.get("matches", {}).get(row.session_uid)
+                preview = (
+                    f"{match['field']}: {match['text']}" if match else row.title or row.preview
+                )
                 table.add_row(
                     handles[row.session_uid],
                     Text(safe_text(row.native_id), overflow="ellipsis", no_wrap=True),
                     row.provider,
-                    Text(
-                        safe_text(row.title or row.preview or ""), overflow="ellipsis", no_wrap=True
-                    ),
+                    Text(safe_text(preview), overflow="ellipsis", no_wrap=True),
                     Text(safe_text(row.cwd), overflow="ellipsis", no_wrap=True),
                     display_time(row.last_activity_at),
                     row.activity,
+                    " ".join(
+                        name
+                        for name in ("history", "resume", "cleanup", "usage")
+                        if row.capabilities[name].state == "supported"
+                    )
+                    or "none available",
                 )
             console.print(table)
+            for row in rows:
+                match = data.get("matches", {}).get(row.session_uid)
+                if match:
+                    console.print(
+                        f"Match {handles[row.session_uid]} ({match['field']}): {match['text']}"
+                    )
             console.print(
                 f"{len(rows)} shown / {data.get('total', len(rows))} sessions; offset {data.get('offset', 0)}"
             )
@@ -186,12 +201,21 @@ def emit(options, result):
                 console.print(
                     f"{name}: {metric['value'] if metric['value'] is not None else 'unknown'} ({explain(metric['reason']) if metric.get('reason') else 'complete'})"
                 )
+            print_context_metrics(console, data["usage"])
             for event in data["events"]:
                 console.print(f"\n{event['role']}: {safe_text(event.get('text') or '[no text]')}")
             if data["next_offset"] is not None:
                 console.print(f"Next: show ID --offset {data['next_offset']}")
         elif result["kind"] == "stats":
             console.print("Selected session lifetimes; period filters select by last activity")
+            console.print(
+                "Selection: " + safe_text(json.dumps(data["selection"], ensure_ascii=False))
+            )
+            activity = data["activity_range"]
+            console.print(
+                f"Known activity range: {display_time(activity['started_at'])} — "
+                f"{display_time(activity['last_activity_at'])}; complete={activity['complete']}"
+            )
             table = Table("Metric", "Known value", "Known / selected", "Status")
             for name, metric in data["metrics"].items():
                 table.add_row(
@@ -201,6 +225,7 @@ def emit(options, result):
                     explain(metric["reason"]) if metric.get("reason") else "complete",
                 )
             console.print(table)
+            print_context_metrics(console, data)
             for group in data["groups"]:
                 console.print(
                     safe_text(group["key"]) + ": " + str(group["metrics"]["total_tokens"]["value"])
@@ -211,6 +236,21 @@ def emit(options, result):
             console.print(safe_text(json.dumps(human_data(data), ensure_ascii=False, indent=2)))
         if result.get("error"):
             console.print(explain(result["error"]["code"]))
+
+
+def print_context_metrics(console, data):
+    from .models import safe_text
+
+    for context in data.get("context_metrics", []):
+        used = context["used_tokens"]
+        maximum = context["max_tokens"]
+        console.print(
+            safe_text(
+                f"Context occupancy (separate from lifetime): "
+                f"{used if used is not None else 'unknown'} / "
+                f"{maximum if maximum is not None else 'unknown'} tokens"
+            )
+        )
 
 
 def main():
@@ -311,6 +351,19 @@ def finish(options, result, *, require_search=False):
         raise typer.Exit(3)
 
 
+def overview_data(catalog, rows, query=None):
+    from .models import short_handles
+
+    handles = short_handles(catalog.sessions(include_missing=True))
+    return {
+        "items": rows,
+        "handles": {s.session_uid: handles[s.session_uid] for s in rows},
+        "matches": {s.session_uid: catalog.match_context(s.session_uid, query) for s in rows}
+        if query
+        else {},
+    }
+
+
 @app.command("list")
 def list_command(
     ctx: typer.Context,
@@ -366,8 +419,8 @@ def list_command(
         result = result_envelope(
             catalog,
             "list",
-            {
-                "items": rows[offset : offset + limit],
+            overview_data(catalog, rows[offset : offset + limit], query)
+            | {
                 "total": len(rows),
                 "limit": limit,
                 "offset": offset,
@@ -431,8 +484,8 @@ def refresh_command(
             result_envelope(
                 catalog,
                 "refresh",
-                {
-                    "items": rows,
+                overview_data(catalog, rows, query)
+                | {
                     "scans": scans,
                     "complete": all(r["state"] == "complete" for r in scans),
                     "state": "finished",
@@ -748,7 +801,13 @@ def stats_command(
             result_envelope(
                 catalog,
                 "stats",
-                summarize(catalog, rows, group_by=group_by),
+                summarize(
+                    catalog,
+                    rows,
+                    group_by=group_by,
+                    selection=spec.selection([selected.display_id] if session else None)
+                    | {"query": query},
+                ),
                 selected=candidates,
                 providers=source,
             ),

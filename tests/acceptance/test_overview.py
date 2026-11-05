@@ -9,6 +9,45 @@ from tests.support.claude_factory import make
 
 
 @pytest.mark.asyncio
+async def test_cold_overview_visible_while_history_reader_is_blocked(
+    isolated, tmp_path, monkeypatch
+):
+    import threading
+
+    from sessions_manager.sources.claude import Adapter
+
+    config, data = isolated
+    root = SourceRoot.create("claude", tmp_path / "native")
+    make(root.path)
+    cfg = Config(data, config, [root], "replace")
+    cfg.prepare()
+    release, entered = threading.Event(), threading.Event()
+    original = Adapter.read_history
+
+    def slow(self, session):
+        entered.set()
+        release.wait(3)
+        return original(self, session)
+
+    monkeypatch.setattr(Adapter, "read_history", slow)
+    with Catalog(data) as catalog:
+        app = SessionsApp(cfg, catalog)
+        try:
+            async with app.run_test() as pilot:
+                for _ in range(30):
+                    if entered.is_set():
+                        break
+                    await pilot.pause(0.01)
+                assert entered.is_set()
+                assert app.query_one("#sessions").row_count == 1
+                assert catalog.sessions()[0].history_state == "partial"
+                release.set()
+                await app.workers.wait_for_complete()
+        finally:
+            release.set()
+
+
+@pytest.mark.asyncio
 async def test_refresh_and_open_have_distinct_keys(isolated, tmp_path, monkeypatch):
     from sessions_manager.ui.screens import ResumeScreen
 
