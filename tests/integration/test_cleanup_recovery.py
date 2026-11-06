@@ -182,6 +182,150 @@ def run_action(service, action, target):
     return service.commit(action, [target], plan["confirmation_token"], assert_closed=True)
 
 
+@pytest.mark.parametrize("stage", ["metadata", "complete"])
+@pytest.mark.parametrize("outcome", ["trashed", "purged", "restored"])
+@pytest.mark.parametrize("other_process", [False, True])
+def test_old_reader_cannot_publish_across_cleanup_lifecycle(
+    tmp_path, stage, outcome, other_process
+):
+    import pickle
+    import subprocess
+    import sys
+
+    from sessions_manager.discovery import prepare_scan, publish_scan, scan_metadata, scan_root
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        catalog = service.catalog
+        session = catalog.get(uid)
+        catalog.hide([session.session_uid], True)
+        _, arguments = prepare_scan(service.config, catalog)
+        # Force a full history/usage/checkpoint result, not just cached metadata.
+        arguments[0][1].clear()
+        result = (scan_metadata if stage == "metadata" else scan_root)(arguments[0])
+        trash = run_action(service, "trash", uid)["items"][0]["trash_id"]
+        if outcome == "purged":
+            run_action(service, "purge", trash)
+        elif outcome == "restored":
+            run_action(service, "restore", trash)
+        before = catalog.get(uid)
+        owner = catalog.connection.execute(
+            "SELECT current_trash_id FROM sessions WHERE uid=?", (session.session_uid,)
+        ).fetchone()[0]
+        events = catalog.events(session.session_uid)
+        if other_process:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    """
+import pickle, sys
+from sessions_manager.catalog import Catalog
+from sessions_manager.discovery import publish_scan
+directory, root, result = pickle.loads(sys.stdin.buffer.read())
+with Catalog(directory) as catalog:
+    publish_scan(catalog, root, result)
+""",
+                ],
+                input=pickle.dumps((service.config.data_dir, root, result)),
+                check=True,
+                capture_output=True,
+            )
+        else:
+            receipt = publish_scan(catalog, root, result)
+            assert receipt["state"] == "partial"
+            assert receipt["reason"] == "lifecycle_refresh_stale"
+        after = catalog.get(uid)
+        assert after == before
+        assert after.hidden and after.session_uid == session.session_uid
+        assert (
+            catalog.connection.execute(
+                "SELECT current_trash_id FROM sessions WHERE uid=?", (session.session_uid,)
+            ).fetchone()[0]
+            == owner
+        )
+        assert catalog.events(session.session_uid) == events
+        if outcome == "purged":
+            for table in (
+                "chunks",
+                "jsonl_cursors",
+                "event_memberships",
+                "usage_memberships",
+                "usage_snapshots",
+                "context_metrics",
+            ):
+                assert not catalog.connection.execute(
+                    f"SELECT 1 FROM {table} WHERE uid=?", (session.session_uid,)
+                ).fetchone()
+        assert neighbor.exists()
+
+
+def test_empty_reader_from_trash_cannot_mark_restored_history_missing(tmp_path):
+    from sessions_manager.discovery import prepare_scan, publish_scan, scan_root
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        trash = run_action(service, "trash", uid)["items"][0]["trash_id"]
+        _, args = prepare_scan(service.config, service.catalog)
+        old = scan_root(args[0])
+        run_action(service, "restore", trash)
+        receipt = publish_scan(service.catalog, root, old)
+        assert receipt["state"] == "partial"
+        assert service.catalog.get(uid).presence == "present"
+        assert path.exists() and neighbor.exists()
+
+
+def test_new_cleanup_cannot_steal_interrupted_operation_lifecycle(tmp_path):
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        plan = service.preview("trash", [uid])
+
+        def crash(stage, target):
+            if stage == "backup_verified":
+                raise Crash()
+
+        service.fault = crash
+        with pytest.raises(Crash):
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        service.fault = None
+        new = service.preview("trash", [uid])
+        with pytest.raises(Failure, match="cleanup_operation_pending"):
+            service.commit("trash", [uid], new["confirmation_token"], assert_closed=True)
+        assert (
+            service.catalog.connection.execute("SELECT COUNT(*) FROM trash_entries").fetchone()[0]
+            == 1
+        )
+        assert (
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)["items"][
+                0
+            ]["state"]
+            == "trashed"
+        )
+
+
+def test_refresh_during_interrupted_cleanup_stays_partial_until_same_operation_recovers(tmp_path):
+    from sessions_manager.discovery import refresh
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        plan = service.preview("trash", [uid])
+
+        def crash(stage, target):
+            if stage == "after_rename":
+                raise Crash()
+
+        service.fault = crash
+        with pytest.raises(Crash):
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        receipts = refresh(service.config, service.catalog)
+        assert receipts[0]["state"] == "partial"
+        assert service.catalog.get(uid).presence == "present"
+        from sessions_manager.launch import catalog_alias_binding
+
+        with pytest.raises(Failure, match="cleanup_operation_pending"):
+            catalog_alias_binding(service.config.data_dir, service.catalog.get(uid).session_uid)
+        service.fault = None
+        result = service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        assert result["items"][0]["state"] == "trashed"
+        assert refresh(service.config, service.catalog)[0]["state"] == "complete"
+
+
 def test_purging_old_restored_backup_preserves_current_trash_cache(tmp_path):
     with case(tmp_path) as (service, root, uid, path, neighbor):
         catalog = service.catalog

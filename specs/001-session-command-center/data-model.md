@@ -1,5 +1,7 @@
 # Data Model: CLI-центр AI-сессий
 
+Current manager catalog version: **4**; native schemas are never migrated.
+
 **Date**: 2026-11-02
 **Basis**: [spec.md](spec.md), [research.md](research.md).
 Это логическая модель; SQL migrations и реализация создаются на следующем этапе.
@@ -304,3 +306,46 @@ parser checkpoints; that generation is explicitly partial. A later fresh reader 
 the watermark. Archive conservatively marks cached content/usage stale for reindex rather
 than assigning a fresh native fingerprint to old cached content. TUI refreshes Codex
 after completion; CLI reindex follows the existing runtime stale-cache gate.
+
+
+## Phase 12 storage and date provenance — 2026-11-06
+
+Schema v4 atomically adds sessions.lifecycle_revision (integer, default 0),
+sessions.lifecycle_pending (nullable original operation ID) and source_storage(root_id,
+payload). v1/v2/v3 session IDs, hidden state, history, locations and operation journals
+are retained. Older binaries reject v4 before writes; downgrade needs a separately
+retained older catalog. Native files are not migrated or restored by a manager downgrade.
+
+Scan results carry their prepared lifecycle revision map privately across workers.
+Publication under BEGIN IMMEDIATE rejects a changed/pending session, including late
+content/search/usage/checkpoint data, and cannot prune locations for that partial root.
+Cleanup increments the revision before work and on terminal completion; a crash retains
+the operation owner. Restore marks history/search stale and usage partial until refresh.
+Purge of the owning entry removes its usage/context memberships and orphan facts as well
+as transcript/search/checkpoint data; neighboring memberships remain retained.
+
+source_storage stores bounded file facts keyed by device/inode (size and mtime only),
+observation time, known/complete/stale and reason. Partial/failed refresh preserves prior
+cached observations and as_of; native mutations invalidate completeness. Total bytes are
+an independent source metric, not a sum/allocation of session sizes or reclaimable bytes.
+Overlapping observations are deduplicated; conflicting file observations are excluded
+with partial coverage (all-conflicted is null, not a known empty zero).
+
+Session.extra.date_provenance maps created_at/last_activity_at to confidence/reason;
+ambiguous_native_dates records naive native timestamps even when aware bounds remain.
+Reasons distinguish timezone_not_recorded, not_recorded and invalid_timestamp. Only
+known UTC instants participate in period filters/ranges; ambiguous records make the
+range incomplete. Legacy payloads keep their UTC values until ordinary refresh annotates
+them. Native archive snapshots add a separate validated per-ID references hash; old
+uncertain operations retain their original history revision semantics for safe retry.
+
+
+Phase 12 native fixture follow-up: Codex 0.166.0 rewrites missing rollout references
+between sessions/YYYY/MM/DD/rollout-<date-time>-<thread-id>.jsonl and
+archived_sessions/<same-basename> during archive/unarchive. Preview and the first call
+still require exact unchanged references. After a persisted per-call intent, observation
+accepts only this verified transition for that affected ID with the expected flag,
+unchanged history/graph and trusted existing ancestors. Newly created native directories
+are allowed; replacement of previously proven common ancestors is not. Current references
+are validated and journaled for same-scope retry; unexpected rewrites remain conflicts.
+Reference evidence stores path, revision and existing ancestor stat identity, not bodies.

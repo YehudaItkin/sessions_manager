@@ -375,3 +375,49 @@ older reader results cannot undo verified flags or publish stale content as fres
 archive explicitly invalidates content/usage caches; one Codex refresh rebuilds them.
 This avoids a new cache service or duplicate transcript index. All source mutations remain
 native RPC; filesystem inventory is validation/hash-only.
+
+## Phase 12 convergence decisions — 2026-11-06
+
+T151–T153/T155–T156 retain the single private catalog and existing workers. Schema v4
+adds sessions.lifecycle_revision/lifecycle_pending and a source_storage observation table.
+Readers capture durable lifecycle revisions at scan preparation. Publication compares them
+under the same SQLite writer transaction as metadata/history/usage/checkpoint updates;
+pending or changed sessions are preserved and the generation remains partial without pruning.
+Cleanup brackets each item with a persisted revision/pending owner; crash recovery keeps
+that owner until the same operation reaches a terminal outcome. Manager resume and new
+cleanup cannot bypass a pending owner. Restore invalidates content readiness; purge removes
+owned usage/context data along with transcript/search/parser caches. A process-local lock
+or timestamp alone cannot protect against delayed readers from another CLI process.
+
+Archive reference evidence separately binds the exact rollout path, existing ancestor
+device/inode/owner/modes and missing component. All existing ancestors are checked even
+without a leaf, without creating/chmodding source files. Separate reference/history hashes
+preserve recovery of v3 uncertain operations: their original IDs/history/flags and current
+trusted paths are still checked. Unconsumed legacy previews require a fresh preview; new
+plans require matching reference evidence on every verification. No new native API is used.
+
+Source storage is measured once per full refresh over known history trees and named native
+DB/WAL/SHM artifacts. Bounded no-follow walks store only device/inode/size/mtime facts, never
+file bodies/credentials. Cached aggregation deduplicates overlapping roots and exposes
+coverage, as_of, stale and conflicting observations separately from per-session allocation.
+Source filters select roots; project/date/session filters do not apportion shared files.
+Summing session sizes misses shared DBs; summing root totals double-counts aliases; walking
+on every stats open violates warm readiness. This small module/table avoids those alternatives
+without a daemon or dependency. Native mutations invalidate observations until refresh.
+
+Per-field date provenance in Session.extra distinguishes missing/invalid/naive dates and
+preserves aware bounds in mixed histories. Existing payloads remain readable; refresh adds
+provenance without reinterpreting legacy UTC values. TDD/boundary/full/package/native fixture
+and unchanged SC-002 gates apply. T154/T113/T130/T144 remain externally blocked; no alternate
+Warp path is attempted, and conditional Codex cleanup T118 remains unchanged.
+
+
+Phase 12 native fixture follow-up: Codex 0.166.0 rewrites missing rollout references
+between sessions/YYYY/MM/DD/rollout-<date-time>-<thread-id>.jsonl and
+archived_sessions/<same-basename> during archive/unarchive. Preview and the first call
+still require exact unchanged references. After a persisted per-call intent, observation
+accepts only this verified transition for that affected ID with the expected flag,
+unchanged history/graph and trusted existing ancestors. Newly created native directories
+are allowed; replacement of previously proven common ancestors is not. Current references
+are validated and journaled for same-scope retry; unexpected rewrites remain conflicts.
+Reference evidence stores path, revision and existing ancestor stat identity, not bodies.

@@ -55,6 +55,9 @@ async def test_stats_ui_explains_unknown_cursor_tokens(isolated, tmp_path):
             text = str(app.screen.query_one(Static).render())
             assert "selected_session_lifetimes" in text
             assert "not_recorded" in text
+            assert '"source_storage"' in text
+            assert "whole_catalogued_history_roots" in text
+            assert "not reclaimable" in text
             from textual.widgets import Select
 
             app.screen.query_one("#stats-group", Select).value = "project"

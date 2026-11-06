@@ -89,7 +89,7 @@ class SessionsApp(App):
         table.clear()
         from rich.text import Text
 
-        from ..models import display_time, short_handles
+        from ..models import display_session_time, short_handles
         from ..search import QuerySpec
 
         all_sessions = self.catalog.sessions(include_missing=True)
@@ -114,8 +114,8 @@ class SessionsApp(App):
                 s.provider,
                 Text(("* " if s.session_uid in self.batch_selection else "") + safe_text(preview)),
                 safe_text(s.cwd),
-                display_time(s.created_at),
-                display_time(s.last_activity_at),
+                display_session_time(s, "created_at"),
+                display_session_time(s, "last_activity_at"),
                 s.activity,
                 " ".join(
                     key
@@ -390,11 +390,23 @@ class SessionsApp(App):
         self.native_archive_preview("archive", ids[0])
 
     def action_archives(self):
+        import sqlite3
+
+        from ..models import Failure
         from ..native_archive import ArchiveService
         from .screens import ArchivesScreen
 
-        service = ArchiveService(self.config, self.catalog)
-        self.push_screen(ArchivesScreen(service.list(), self.native_archive_preview))
+        try:
+            service = ArchiveService(self.config, self.catalog)
+            listing = service.list()
+        except (Failure, OSError, sqlite3.Error) as failure:
+            self.push_screen(
+                TextScreen(
+                    explain(failure.code if isinstance(failure, Failure) else "catalog_read_failed")
+                )
+            )
+            return
+        self.push_screen(ArchivesScreen(listing, self.native_archive_preview))
 
     def native_archive_preview(self, action, selector):
         if self.scanning:
@@ -404,8 +416,8 @@ class SessionsApp(App):
         from ..native_archive import ArchiveService
         from .screens import CleanupScreen
 
-        service = ArchiveService(self.config, self.catalog)
         try:
+            service = ArchiveService(self.config, self.catalog)
             if action == "archive-retry":
                 operation = next(
                     (op for op in service.operations() if op["operation_id"] == selector), None

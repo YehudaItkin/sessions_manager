@@ -6,7 +6,7 @@ import datetime as dt
 import json
 
 from .catalog import unpack
-from .models import TOKEN_CATEGORIES, Failure
+from .models import TOKEN_CATEGORIES, Failure, date_confidence
 from .search import local_zone
 
 
@@ -155,6 +155,8 @@ def summarize(catalog, sessions, *, group_by=None, selection=None):
     facts, members, snapshots = catalog.usage([s.session_uid for s in sessions])
     metrics = _token_metrics(sessions, facts, members, snapshots)
     metrics.update(_other_metrics(catalog, sessions))
+    from .storage import summarize as storage_summary
+
     groups = []
     if group_by:
 
@@ -216,7 +218,7 @@ def summarize(catalog, sessions, *, group_by=None, selection=None):
                 (
                     s.created_at
                     for s in sessions
-                    if s.created_at is not None and s.timezone_confidence == "known"
+                    if s.created_at is not None and date_confidence(s, "created_at") == "known"
                 ),
                 default=None,
             ),
@@ -224,14 +226,18 @@ def summarize(catalog, sessions, *, group_by=None, selection=None):
                 (
                     s.last_activity_at
                     for s in sessions
-                    if s.last_activity_at is not None and s.timezone_confidence == "known"
+                    if s.last_activity_at is not None
+                    and date_confidence(s, "last_activity_at") == "known"
                 ),
                 default=None,
             ),
             "complete": all(
                 s.created_at is not None
                 and s.last_activity_at is not None
-                and s.timezone_confidence == "known"
+                and date_confidence(s, "created_at")
+                == date_confidence(s, "last_activity_at")
+                == "known"
+                and not s.extra.get("ambiguous_native_dates")
                 for s in sessions
             ),
             "time_zone": "UTC",
@@ -240,6 +246,7 @@ def summarize(catalog, sessions, *, group_by=None, selection=None):
         "period_semantics": "sessions_selected_by_last_activity",
         "time_zone": str(local_zone()),
         "metrics": metrics,
+        "source_storage": storage_summary(catalog, sessions, selection),
         "groups": groups,
         "context_metrics": contexts,
         "coverage": {

@@ -2,7 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from ..models import Capability, Failure, Session, timestamp
+from ..models import Capability, Failure, Session, annotate_dates, timestamp
 from .base import (
     ScanResult,
     available_root,
@@ -103,6 +103,11 @@ class Adapter:
                     if store.parent.parent.name in self._workspace_cwds
                     else "not_recorded",
                 },
+            )
+            annotate_dates(
+                session,
+                [meta.get("createdAtMs") or native_meta.get("createdAt")],
+                [meta.get("updatedAtMs")],
             )
             session.capabilities["metadata"] = Capability("supported")
             session.capabilities["usage"] = Capability("unavailable", "not_recorded")

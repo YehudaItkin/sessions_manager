@@ -6,9 +6,11 @@ not a lock on other Codex processes. Native success is verified per confirmed ID
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
+import re
 import secrets
 import selectors
 import sqlite3
@@ -173,7 +175,7 @@ def native_snapshot(root, tid):
         if any(member not in rows for member in order):
             raise Failure("archive_graph_unavailable", 4)
         graph = {member: sorted(edges.get(member, [])) for member in order}
-        members = {}
+        members, references = {}, {}
         tables = {
             "thread_items": {"thread_id", "item_id", "item_json", "turn_id", "rollout_ordinal"},
             "thread_realtime_items": {"thread_id", "item_id", "item_json", "rollout_ordinal"},
@@ -200,11 +202,20 @@ def native_snapshot(root, tid):
                         ).encode()
                     )
                 rollout = Path(row["rollout_path"]) if row["rollout_path"] else None
+                evidence = []
                 if rollout:
-                    if ".." in rollout.parts or not rollout.is_relative_to(root.path):
-                        raise Failure("path_outside_source_root", 5)
-                    if rollout.is_symlink():
-                        raise Failure("unsafe_artifact_owner_or_link", 5)
+                    rollout = fsops.secure_path(
+                        rollout, root.path, allow_missing=True, evidence=evidence
+                    )
+                references[member] = {
+                    "path": str(rollout) if rollout else None,
+                    "revision": checksum(evidence),
+                    "existing": {
+                        item["path"]: {key: item[key] for key in ("dev", "inode", "mode", "owner")}
+                        for item in evidence
+                        if "path" in item
+                    },
+                }
                 if rollout and rollout.exists():
                     inventory = fsops.inventory(rollout, root.path)
                     digest.update(inventory["."]["sha256"].encode())
@@ -212,10 +223,76 @@ def native_snapshot(root, tid):
                     "archived": bool(row["archived"]),
                     "revision": digest.hexdigest(),
                 }
-    return {"members": members, "graph": graph, "order": order, "paths": list(map(str, paths))}
+    return {
+        "members": members,
+        "references": references,
+        "graph": graph,
+        "order": order,
+        "paths": list(map(str, paths)),
+    }
 
 
 TERMINAL = ("complete", "failed_no_change")
+
+
+def valid_references(value, ids):
+    if not isinstance(value, dict) or set(value) != set(ids):
+        return False
+    for reference in value.values():
+        if not isinstance(reference, dict) or set(reference) != {"path", "revision", "existing"}:
+            return False
+        path, revision, existing = reference["path"], reference["revision"], reference["existing"]
+        if path is not None and (
+            not isinstance(path, str)
+            or not Path(path).is_absolute()
+            or ".." in Path(path).parts
+            or "\0" in path
+        ):
+            return False
+        if (
+            not isinstance(revision, str)
+            or len(revision) != 64
+            or any(c not in "0123456789abcdef" for c in revision)
+        ):
+            return False
+        if not isinstance(existing, dict) or any(
+            not isinstance(p, str)
+            or not Path(p).is_absolute()
+            or not isinstance(stamp, dict)
+            or set(stamp) != {"dev", "inode", "mode", "owner"}
+            or any(type(v) is not int or v < 0 for v in stamp.values())
+            for p, stamp in existing.items()
+        ):
+            return False
+    return True
+
+
+def native_reference_transition(root, before, after, tid, archived):
+    """Only the observed 0.166 rollout relocation, after a journaled native intent."""
+    if before["path"] is None or after["path"] is None:
+        return False
+    old, new = Path(before["path"]), Path(after["path"])
+    match = re.fullmatch(
+        r"rollout-(\d{4})-(\d{2})-(\d{2})T\d{2}-\d{2}-\d{2}-" + re.escape(tid) + r"\.jsonl",
+        old.name,
+    )
+    if not match:
+        return False
+    try:
+        dt.date(*map(int, match.groups()))
+    except ValueError:
+        return False
+    live = root.path / "sessions" / Path(*match.groups()) / old.name
+    archive = root.path / "archived_sessions" / old.name
+    if old not in (live, archive) or new != (archive if archived else live):
+        return False
+    # Native may create formerly missing directories, but may not replace an
+    # already proven ancestor common to both locations (or an unchanged path).
+    return all(
+        after["existing"].get(path) == stamp
+        for path, stamp in before["existing"].items()
+        if old == new or path in after["existing"]
+    )
 
 
 def validate_plan(value):
@@ -261,6 +338,9 @@ def validate_plan(value):
                 or any(c not in "0123456789abcdef" for c in revision)
             ):
                 raise ValueError()
+        references = snapshot.get("references")
+        if references is not None and not valid_references(references, members):
+            raise ValueError()
         for key in ("root_id", "namespace", "path", "executable"):
             if not isinstance(binding[key], str) or not binding[key] or "\0" in binding[key]:
                 raise ValueError()
@@ -299,6 +379,10 @@ def load_operation(value):
         ):
             raise ValueError()
         intent = op["intent"]
+        if op.get("references") is not None and not valid_references(
+            op["references"], plan["before"]
+        ):
+            raise ValueError()
         if intent is not None and (
             intent["id"] not in plan["before"] or type(intent["archived"]) is not bool
         ):
@@ -379,11 +463,24 @@ class ArchiveService:
         self._safe(root, value, handles=handles)
         return value
 
-    def _check(self, root, plan, *, handles=True):
+    def _check(
+        self,
+        root,
+        plan,
+        *,
+        handles=True,
+        allow_legacy=False,
+        references=None,
+        check_references=True,
+    ):
+        references = references if references is not None else plan["snapshot"].get("references")
+        if references is None and not allow_legacy:
+            raise Failure("archive_preview_outdated", 7)
         current = self._capture(root, plan["native_id"], handles=handles)
         if (
             self._binding(root) != plan["binding"]
             or current["graph"] != plan["snapshot"]["graph"]
+            or (check_references and references is not None and references != current["references"])
             or {k: v["revision"] for k, v in current["members"].items()}
             != {k: v["revision"] for k, v in plan["snapshot"]["members"].items()}
         ):
@@ -530,6 +627,7 @@ class ArchiveService:
                 "flags": plan["before"].copy(),
                 "intent": None,
                 "native_started": False,
+                "references": plan["snapshot"].get("references"),
                 "state": "running",
                 "error": None,
             }
@@ -571,7 +669,13 @@ class ArchiveService:
             return self._result(op)
 
     def _observe(self, root, op, *, handles):
-        snapshot = self._check(root, op["plan"], handles=handles)
+        snapshot = self._check(
+            root,
+            op["plan"],
+            handles=handles,
+            allow_legacy=op.get("native_started", False),
+            check_references=False,
+        )
         actual = {k: v["archived"] for k, v in snapshot["members"].items()}
         intent = op["intent"]
         affected = descendants(op["plan"]["snapshot"]["graph"], intent["id"]) if intent else []
@@ -580,9 +684,27 @@ class ArchiveService:
             for tid, value in actual.items()
         ):
             raise Failure("archive_source_changed", 5)
+        previous = op.get("references", op["plan"]["snapshot"].get("references"))
+        if previous is not None and any(
+            reference != previous[tid]
+            and not (
+                tid in affected
+                and actual[tid] == intent["archived"]
+                and native_reference_transition(
+                    root, previous[tid], reference, tid, intent["archived"]
+                )
+            )
+            for tid, reference in snapshot["references"].items()
+        ):
+            raise Failure("archive_source_changed", 5)
+        op["references"] = snapshot["references"]
         op["flags"], op["intent"] = actual, None
         self._save(op)
         with self.catalog.writer() as db:
+            db.execute(
+                "UPDATE source_storage SET payload=json_set(payload,'$.stale',json('true'),'$.complete',json('false')) WHERE root_id=?",
+                (root.root_id,),
+            )
             for tid, flag in actual.items():
                 uid = identity(root.namespace_id, tid)
                 if not db.execute("SELECT 1 FROM sessions WHERE uid=?", (uid,)).fetchone():
@@ -616,7 +738,13 @@ class ArchiveService:
                     for tid in op["plan"]["snapshot"]["order"]:
                         if actual[tid] == op["plan"]["desired"][tid]:
                             continue
-                        self._check(root, op["plan"], handles=False)
+                        self._check(
+                            root,
+                            op["plan"],
+                            handles=False,
+                            allow_legacy=op.get("native_started", False),
+                            references=op.get("references"),
+                        )
                         op["intent"] = {"id": tid, "archived": op["plan"]["desired"][tid]}
                         op["native_started"] = True
                         self._save(op)
@@ -648,7 +776,12 @@ class ArchiveService:
         # existing indexed history/usage/hidden state; no shared-store rollback.
         result = adapter(root).discover()
         fresh = {s.native_id: s for s in result.sessions}
-        current = self._check(root, op["plan"])
+        current = self._check(
+            root,
+            op["plan"],
+            allow_legacy=op.get("native_started", False),
+            references=op.get("references"),
+        )
         if {k: v["archived"] for k, v in current["members"].items()} != op["flags"]:
             raise Failure("archive_source_changed", 5)
         with self.catalog.writer() as db:

@@ -6,7 +6,7 @@ import datetime as dt
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
-from .models import Failure
+from .models import Failure, date_confidence
 
 SORT_OPTIONS = (
     ("Last activity", "updated"),
@@ -150,7 +150,7 @@ class QuerySpec:
                 lower is None
                 or (
                     s.last_activity_at is not None
-                    and s.timezone_confidence == "known"
+                    and date_confidence(s, "last_activity_at") == "known"
                     and s.last_activity_at >= lower
                 )
             )
@@ -158,7 +158,7 @@ class QuerySpec:
                 upper is None
                 or (
                     s.last_activity_at is not None
-                    and s.timezone_confidence == "known"
+                    and date_confidence(s, "last_activity_at") == "known"
                     and s.last_activity_at <= upper
                 )
             )

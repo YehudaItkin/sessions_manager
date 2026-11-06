@@ -54,6 +54,12 @@ def catalog_alias_binding(data_dir, uid):
             db.execute("PRAGMA query_only=ON")
             db.execute("PRAGMA trusted_schema=OFF")
             row = db.execute("SELECT payload,presence FROM sessions WHERE uid=?", (uid,)).fetchone()
+            if any(r[1] == "lifecycle_pending" for r in db.execute("PRAGMA table_info(sessions)")):
+                pending = db.execute(
+                    "SELECT lifecycle_pending FROM sessions WHERE uid=?", (uid,)
+                ).fetchone()
+                if pending and pending[0]:
+                    raise Failure("cleanup_operation_pending", 5)
             if db.execute(
                 "SELECT 1 FROM sqlite_master WHERE name='native_archive_operations'"
             ).fetchone():

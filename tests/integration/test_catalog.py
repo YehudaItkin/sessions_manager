@@ -104,7 +104,7 @@ def test_phase10_migrates_v1_records_and_marks_new_schema(tmp_path):
     with Catalog(data) as upgraded:
         assert upgraded.get(session.display_id).hidden
         assert upgraded.get(session.display_id).presence == "present"
-        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 4
         location = upgraded.connection.execute("SELECT payload FROM locations").fetchone()
         assert location[0] is None
 
@@ -136,7 +136,29 @@ def test_archive_capability_migration_retains_v2_session_and_marks_schema(tmp_pa
         )
         legacy.execute("PRAGMA user_version=2")
     with Catalog(data) as upgraded:
-        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert upgraded.connection.execute("PRAGMA user_version").fetchone()[0] == 4
         found = upgraded.get(session.display_id)
         assert found.hidden and found.capabilities["archive"].state == "unavailable"
         assert found.capabilities["unarchive"].state == "unavailable"
+
+
+def test_lifecycle_v3_migration_preserves_identity_and_hidden_state(tmp_path):
+    import sqlite3
+
+    root = SourceRoot.create("claude", tmp_path / "native")
+    session = Session.build(root, "legacy-v3", root.path / "legacy")
+    data = tmp_path / "manager"
+    with Catalog(data) as catalog:
+        catalog.publish(root, [session], complete=True)
+        catalog.hide([session.session_uid], True)
+    with sqlite3.connect(data / "catalog.sqlite3") as legacy:
+        legacy.execute("ALTER TABLE sessions DROP COLUMN lifecycle_revision")
+        legacy.execute("ALTER TABLE sessions DROP COLUMN lifecycle_pending")
+        legacy.execute("PRAGMA user_version=3")
+    with Catalog(data) as catalog:
+        assert catalog.get(session.display_id).hidden
+        assert tuple(
+            catalog.connection.execute(
+                "SELECT lifecycle_revision,lifecycle_pending FROM sessions"
+            ).fetchone()
+        ) == (0, None)

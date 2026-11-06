@@ -294,6 +294,12 @@ class CleanupService:
                     raise Failure("confirmation_stale", 7)
         operation_id = str(uuid.uuid4())
         with self.catalog.writer() as db:
+            for target in targets:
+                pending = db.execute(
+                    "SELECT lifecycle_pending FROM sessions WHERE uid=?", (target["session_uid"],)
+                ).fetchone()
+                if pending and pending[0]:
+                    raise Failure("cleanup_operation_pending", 5)
             db.execute(
                 "INSERT INTO operations VALUES (?,?,?,?)",
                 (operation_id, row["plan_id"], "running", now_ms()),
@@ -507,6 +513,10 @@ class CleanupService:
                 (entry["session_uid"],),
             )
             db.execute(
+                "UPDATE sessions SET payload=json_set(payload,'$.history_state','stale','$.search_state','stale','$.usage_state','partial') WHERE uid=?",
+                (entry["session_uid"],),
+            )
+            db.execute(
                 "UPDATE trash_entries SET state='restored' WHERE trash_id=?", (entry["trash_id"],)
             )
         item.update(
@@ -561,6 +571,12 @@ class CleanupService:
                 db.execute("DELETE FROM chunks WHERE uid=?", (uid,))
                 db.execute("DELETE FROM jsonl_cursors WHERE uid=?", (uid,))
                 db.execute("DELETE FROM event_memberships WHERE uid=?", (uid,))
+                db.execute("DELETE FROM usage_memberships WHERE uid=? OR origin_uid=?", (uid, uid))
+                db.execute("DELETE FROM usage_snapshots WHERE uid=?", (uid,))
+                db.execute("DELETE FROM context_metrics WHERE uid=?", (uid,))
+                db.execute(
+                    "DELETE FROM usage_facts WHERE fact_uid NOT IN (SELECT fact_uid FROM usage_memberships)"
+                )
                 db.execute(
                     "DELETE FROM events WHERE event_uid NOT IN (SELECT event_uid FROM event_memberships)"
                 )
@@ -634,8 +650,10 @@ class CleanupService:
                     "purged",
                     "failed_no_change",
                 ) and not item.get("cleanup_pending"):
+                    self.catalog.finish_lifecycle(target["session_uid"], op)
                     result.append(item)
                     continue
+                self.catalog.begin_lifecycle(target["session_uid"], op)
                 try:
                     if action == "trash":
                         self._trash(op, target, item)
@@ -675,6 +693,8 @@ class CleanupService:
                         if item["trash_id"]:
                             self._entry_state(item["trash_id"], item["state"])
                 self._save_item(op, item)
+                if item["state"] in ("trashed", "restored", "purged", "failed_no_change"):
+                    self.catalog.finish_lifecycle(target["session_uid"], op)
                 result.append(item)
             terminal = all(
                 item["state"] in ("trashed", "restored", "purged")

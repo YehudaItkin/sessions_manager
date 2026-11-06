@@ -202,3 +202,33 @@ block native resume, including fresh single-source request construction.
 Snapshot size is bounded to 10,000 IDs, cycles/unknown profiles fail closed. Closed-session
 assertion is mandatory and does not bypass observed handles or establish a native revision
 lock. Permanent/trash deletion T118 and the separate Warp runtime gates remain unchanged.
+
+
+## Phase 12 publication and reference boundaries — 2026-11-06
+
+Each cleanup item owns a persisted lifecycle revision/pending operation. Old reader
+results cannot revive a tombstone, clear a newer trash owner, repopulate purged derived
+caches or mark a restored session missing. The check and publication share one SQLite
+writer transaction. Pending/revision-mismatched roots remain partial without pruning.
+New Open/cleanup is refused while the original item requires recovery; retry of the
+same operation releases its pending owner only on a terminal result. Verified later
+native reappearance still preserves manager ID/hidden state. Restore requires reindexing;
+shared/neighbor data remain protected when clearing owned derived usage on purge.
+
+Archive/Unarchive validate existing ancestry of missing rollout references, rejecting
+symlinks, writable/foreign parents and non-directory components before RPC. New previews
+bind both history and reference evidence. Unused legacy previews return
+archive_preview_outdated and require new preview; uncertain legacy operations can retry
+the same IDs against original history/flags plus current trusted path checks. No new
+IDs, source creation, direct native DML or forced rollback is introduced.
+
+
+Phase 12 native fixture follow-up: Codex 0.166.0 rewrites missing rollout references
+between sessions/YYYY/MM/DD/rollout-<date-time>-<thread-id>.jsonl and
+archived_sessions/<same-basename> during archive/unarchive. Preview and the first call
+still require exact unchanged references. After a persisted per-call intent, observation
+accepts only this verified transition for that affected ID with the expected flag,
+unchanged history/graph and trusted existing ancestors. Newly created native directories
+are allowed; replacement of previously proven common ancestors is not. Current references
+are validated and journaled for same-scope retry; unexpected rewrites remain conflicts.
+Reference evidence stores path, revision and existing ancestor stat identity, not bodies.

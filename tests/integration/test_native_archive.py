@@ -74,6 +74,26 @@ def archive_case(tmp_path, monkeypatch):
                         "UPDATE threads SET archived=? WHERE id=?",
                         (method == "thread/archive", member),
                     )
+                    if behavior.get("rewrite_paths"):
+                        from pathlib import Path
+
+                        old_path = Path(
+                            db.execute(
+                                "SELECT rollout_path FROM threads WHERE id=?", (member,)
+                            ).fetchone()[0]
+                        )
+                        folder = (
+                            home / "archived_sessions"
+                            if method == "thread/archive"
+                            else home / "sessions/2026/11/06"
+                        )
+                        if behavior["rewrite_paths"] == "unexpected":
+                            folder = home / "unexpected"
+                        folder.mkdir(parents=True, exist_ok=True)
+                        db.execute(
+                            "UPDATE threads SET rollout_path=? WHERE id=?",
+                            (str(folder / old_path.name), member),
+                        )
             if behavior["lost"]:
                 behavior["lost"] = False
                 raise OSError("synthetic lost reply after native commit")
@@ -90,6 +110,140 @@ def archive_case(tmp_path, monkeypatch):
 def perform(service, action, uid):
     plan = service.preview(action, uid)
     return service.commit(action, uid, plan["confirmation_token"], assert_closed=True)
+
+
+def test_archive_invalidates_source_storage_observation(tmp_path, monkeypatch):
+    from sessions_manager.statistics import summarize
+
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        assert summarize(service.catalog, service.catalog.sessions())["source_storage"]["complete"]
+        perform(service, "archive", uid)
+        assert not summarize(service.catalog, service.catalog.sessions())["source_storage"][
+            "complete"
+        ]
+        refresh(service.config, service.catalog)
+        assert summarize(service.catalog, service.catalog.sessions())["source_storage"]["complete"]
+
+
+def test_legacy_uncertain_archive_can_recover_with_current_trusted_paths(tmp_path, monkeypatch):
+    # Frozen v3 fixture hashes: no rollout files, cwd fixed independently of tmp_path.
+    legacy = {
+        "parent": "e677e0dadb5a14b8d44f90b0ee34c9a463bcac6db26d16085b57bf64db29a89e",
+        "child": "605718889377165951df10dad52c681fb4e4244cb6b1343119f09a82afd81905",
+        "prior": "c39b479e40dcc03c616f8fbb7060067dfa6d94aa044af66b2e5e8b52862b3be1",
+    }
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+            db.execute("UPDATE threads SET cwd='/synthetic-legacy-project'")
+        behavior["lost"] = True
+        result = perform(service, "archive", uid)
+        assert result["state"] == "recovery_required"
+        with service.catalog.writer() as db:
+            op = json.loads(
+                db.execute(
+                    "SELECT payload FROM native_archive_operations WHERE id=?",
+                    (result["operation_id"],),
+                ).fetchone()[0]
+            )
+            op["plan"]["snapshot"].pop("references", None)
+            op.pop("references", None)
+            for tid, revision in legacy.items():
+                op["plan"]["snapshot"]["members"][tid]["revision"] = revision
+            db.execute(
+                "UPDATE native_archive_operations SET payload=? WHERE id=?",
+                (json.dumps(op), result["operation_id"]),
+            )
+        assert service.retry(result["operation_id"], assert_closed=True)["state"] == "complete"
+        assert flags()["neighbor"] == 0
+
+
+def test_unused_legacy_archive_preview_requires_new_preview(tmp_path, monkeypatch):
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        plan = service.preview("archive", uid)
+        with service.catalog.writer() as db:
+            saved = json.loads(db.execute("SELECT payload FROM native_archive_plans").fetchone()[0])
+            saved["snapshot"].pop("references", None)
+            db.execute("UPDATE native_archive_plans SET payload=?", (json.dumps(saved),))
+        with pytest.raises(Failure, match="archive_preview_outdated"):
+            service.commit("archive", uid, plan["confirmation_token"], assert_closed=True)
+        assert calls == []
+
+
+@pytest.mark.parametrize("lost_reply", [False, True])
+def test_native_missing_rollout_path_rewrites_are_verified_and_recoverable(
+    tmp_path, monkeypatch, lost_reply
+):
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+            for tid in ("parent", "child", "prior", "neighbor"):
+                prefix = "archived_sessions" if tid == "prior" else "sessions/2026/11/06"
+                db.execute(
+                    "UPDATE threads SET rollout_path=? WHERE id=?",
+                    (str(root.path / prefix / f"rollout-2026-11-06T10-00-00-{tid}.jsonl"), tid),
+                )
+        behavior["rewrite_paths"] = True
+        behavior["lost"] = lost_reply
+        result = perform(service, "archive", uid)
+        if lost_reply:
+            assert result["state"] == "recovery_required"
+            result = service.retry(result["operation_id"], assert_closed=True)
+        assert result["state"] == "complete", result.get("error")
+        assert perform(service, "unarchive", uid)["state"] == "complete"
+        assert flags() == dict(parent=0, child=0, prior=1, neighbor=0)
+        assert not list(root.path.rglob("*.jsonl"))
+
+
+def test_native_unexpected_reference_rewrite_is_not_accepted_as_complete(tmp_path, monkeypatch):
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        behavior["rewrite_paths"] = "unexpected"
+        result = perform(service, "archive", uid)
+        assert result["state"] == "recovery_required"
+        assert result["error"] == "archive_source_changed"
+        assert (
+            service.retry(result["operation_id"], assert_closed=True)["state"]
+            == "recovery_required"
+        )
+        assert flags()["neighbor"] == 0
 
 
 def test_preview_binds_full_graph_and_preserves_prior_flags_after_restore(tmp_path, monkeypatch):
@@ -268,6 +422,93 @@ def test_archive_rejects_missing_rollout_reference_outside_native_home(tmp_path,
             )
         with pytest.raises(Failure, match="path_outside_source_root"):
             service.preview("archive", uid)
+        assert calls == []
+
+
+@pytest.mark.parametrize("action", ["archive", "unarchive"])
+@pytest.mark.parametrize("kind", ["symlink", "dangling", "writable", "file", "foreign"])
+def test_missing_rollout_requires_trusted_existing_parents(tmp_path, monkeypatch, kind, action):
+    import os
+    from pathlib import Path
+
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        if action == "unarchive":
+            perform(service, "archive", uid)
+            calls.clear()
+        parent = root.path / "unsafe-parent"
+        if kind in ("symlink", "dangling"):
+            outside = tmp_path / "outside"
+            if kind == "symlink":
+                outside.mkdir()
+            parent.symlink_to(outside, target_is_directory=True)
+        elif kind == "file":
+            parent.write_text("synthetic non-directory")
+        else:
+            parent.mkdir()
+            if kind == "writable":
+                parent.chmod(0o777)
+            else:
+                real_lstat = Path.lstat
+
+                def foreign(path):
+                    info = real_lstat(path)
+                    if path == parent:
+                        values = list(info)
+                        values[4] = os.getuid() + 1
+                        return os.stat_result(values)
+                    return info
+
+                monkeypatch.setattr(Path, "lstat", foreign)
+        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+            db.execute(
+                "UPDATE threads SET rollout_path=? WHERE id='child'",
+                (str(parent / "missing.jsonl"),),
+            )
+        with pytest.raises(Failure):
+            service.preview(action, uid)
+        assert calls == []
+
+
+@pytest.mark.parametrize("change", ["reference", "parent"])
+def test_missing_rollout_binding_change_invalidates_preview_before_rpc(
+    tmp_path, monkeypatch, change
+):
+    with archive_case(tmp_path, monkeypatch) as (
+        service,
+        root,
+        uid,
+        flags,
+        calls,
+        behavior,
+        client,
+    ):
+        parent = root.path / "safe-parent"
+        parent.mkdir()
+        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+            db.execute(
+                "UPDATE threads SET rollout_path=? WHERE id='child'",
+                (str(parent / "missing.jsonl"),),
+            )
+        plan = service.preview("archive", uid)
+        if change == "reference":
+            with sqlite3.connect(root.path / "state_5.sqlite") as db:
+                db.execute(
+                    "UPDATE threads SET rollout_path=? WHERE id='child'",
+                    (str(parent / "different.jsonl"),),
+                )
+        else:
+            parent.rename(root.path / "old-parent")
+            parent.mkdir()
+        with pytest.raises(Failure, match="archive_source_changed"):
+            service.commit("archive", uid, plan["confirmation_token"], assert_closed=True)
         assert calls == []
 
 

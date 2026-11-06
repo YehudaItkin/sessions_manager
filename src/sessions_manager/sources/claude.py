@@ -1,4 +1,4 @@
-from ..models import Capability, Failure, Session, timestamp
+from ..models import Capability, Failure, Session, annotate_dates, timestamp
 from .base import (
     ScanResult,
     available_root,
@@ -106,6 +106,12 @@ class Adapter:
             )
             from .base import claude_cleanup_shape
 
+            native_dates = [r.get("timestamp") for r in records]
+            annotate_dates(
+                session,
+                native_dates,
+                native_dates if not getattr(self, "metadata_only", False) else [],
+            )
             session._cleanup_shape_verified = claude_cleanup_shape(rows, native)
             session.capabilities["metadata"] = Capability("supported")
             session.capabilities["resume"] = resume_capability(self.root)

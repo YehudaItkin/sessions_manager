@@ -233,3 +233,28 @@ failed_no_change commit/retry returns 3; precondition/confirmation errors retain
 Default list/refresh/stats exclude native archived records independently of manager hide.
 `show ID` can still inspect a cached archive; resume requires Unarchive and no pending
 operation. CLI archive startup/reindex scans Codex roots only. Other sources are untouched.
+
+
+## Phase 12 additive statistics/date presentation — 2026-11-06
+
+stats JSON adds source_storage independently of metrics. Fields: scope=
+whole_catalogued_history_roots, value (known unique logical bytes or null), complete,
+cached, as_of, selected_roots/known_roots, deduplicated_files/conflicting_files, reason,
+per-root provider/path/value/as_of/complete/stale/reason and explanatory notes. Device/inode
+facts remain private. Source filters choose whole catalogued roots; session/project/date
+filters do not divide shared bytes. For a single-session detail, source size refers to
+its whole source. Unknown is not zero; all-conflicted evidence is null. Physical allocated
+blocks/compression/freeable space are not claimed. Human stats label Source storage,
+whole history roots and not reclaimable space; TUI statistics exposes the same fields.
+Stats opening uses cached observations without rescanning native files.
+
+Session JSON adds per-field extra.date_provenance confidence/reason and
+ambiguous_native_dates. Human list/show/TUI explain ambiguous (timezone not recorded),
+while absent/invalid dates remain unknown. Aware dates retain local-zone display and
+participate in period filters even alongside naive dates; ranges show incomplete.
+
+Opening Codex Archives handles service/list failures with a content-free explanation
+and return to overview; an invalid journal is preserved and never reported as an empty
+archive. cleanup_operation_pending blocks Open/new cleanup until same-operation recovery.
+lifecycle_refresh_stale marks late/overlapping scan results partial; no cached state is
+silently replaced. Machine codes and envelope version 1 remain stable/additive.
