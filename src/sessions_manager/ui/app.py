@@ -74,7 +74,7 @@ class SessionsApp(App):
             table.add_column(label, width=width, key=key)
         self.reload_rows()
         table.focus()
-        if not self.catalog.root_states():
+        if not self.catalog.root_states() or not self.catalog.index_valid:
             self.action_refresh()
 
     def selected_uid(self):
@@ -252,13 +252,17 @@ class SessionsApp(App):
 
         uid = self.selected_uid()
         if uid:
-            self.push_screen(ResumeScreen(self.catalog.get(uid).cwd), self._resume_choice)
+            selected = self.catalog.get(uid)
+            self.push_screen(
+                ResumeScreen(selected.cwd, session=selected),
+                lambda value: self._resume_choice(value, uid=uid, selected=selected),
+            )
 
-    def _resume_choice(self, value):
+    def _resume_choice(self, value, *, uid, selected):
         if value:
-            self.resume_selected(*value)
+            self.resume_selected(*value, uid=uid, selected=selected)
 
-    def resume_selected(self, target, cwd):
+    def resume_selected(self, target, cwd, *, uid=None, selected=None):
         if self.scanning:
             self.notify("Wait for refresh to finish before resume", severity="warning")
             return
@@ -267,12 +271,22 @@ class SessionsApp(App):
         from ..warp import deliver
         from .screens import ResumeScreen
 
-        uid = self.selected_uid()
+        uid = uid or self.selected_uid()
         if not uid:
             return
-        session = self.catalog.get(uid)
-        root = next((r for r in self.config.roots if r.root_id == session.root_id), None)
         try:
+            session = self.catalog.get(uid)
+            if selected is not None and (
+                session.presence != "present"
+                or any(
+                    getattr(session, key) != getattr(selected, key)
+                    for key in ("root_id", "locator", "fingerprint", "cwd")
+                )
+            ):
+                raise Failure("source_changed", 5)
+            root = next(
+                (r for r in self.config.roots if r.enabled and r.root_id == session.root_id), None
+            )
             if root is None:
                 raise Failure("resume_binding_unverified", 4)
             request = build_request(root, session, self.config.data_dir, cwd=cwd, target=target)
@@ -287,7 +301,11 @@ class SessionsApp(App):
         except Failure as failure:
             guide = failure.data.get("manual_resume_guide")
             if guide:
-                self.push_screen(ResumeScreen(cwd, guide), self._resume_choice)
+                selected = selected or session
+                self.push_screen(
+                    ResumeScreen(cwd, guide, session=selected),
+                    lambda value: self._resume_choice(value, uid=uid, selected=selected),
+                )
             else:
                 self.push_screen(TextScreen(explain(failure.code)))
 
@@ -366,11 +384,23 @@ class SessionsApp(App):
             self.cleanup_preview("trash", self.selected_ids())
 
     def action_trash(self):
+        import sqlite3
+
         from ..cleanup import CleanupService
+        from ..models import Failure
         from .screens import TrashScreen
 
-        service = CleanupService(self.config, self.catalog)
-        self.push_screen(TrashScreen(service.trash_list(), self.cleanup_preview))
+        try:
+            service = CleanupService(self.config, self.catalog)
+            listing = service.trash_list()
+        except (Failure, OSError, sqlite3.Error) as failure:
+            self.push_screen(
+                TextScreen(
+                    explain(failure.code if isinstance(failure, Failure) else "catalog_read_failed")
+                )
+            )
+            return
+        self.push_screen(TrashScreen(listing, self.cleanup_preview))
 
     def action_statistics(self):
         from ..search import QuerySpec

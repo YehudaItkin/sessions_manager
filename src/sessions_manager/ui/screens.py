@@ -26,16 +26,25 @@ class TextScreen(ModalScreen):
 class ResumeScreen(ModalScreen):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, cwd=None, guide=None):
+    def __init__(self, cwd=None, guide=None, *, session=None):
         super().__init__()
         self.cwd = cwd or ""
         self.guide = guide
+        self.session = session
 
     def compose(self):
         from textual.widgets import Input
 
         with VerticalScroll():
             yield Static("Resume exact native session", markup=False)
+            if self.session:
+                yield Static(
+                    safe_text(
+                        f"{self.session.provider}: {self.session.display_id}\n"
+                        f"Native ID: {self.session.native_id}\nHistory: {self.session.locator}"
+                    ),
+                    markup=False,
+                )
             if self.guide:
                 yield Static(safe_text(resume_guide(self.guide)), markup=False)
             yield Input(value=self.cwd, placeholder="Existing project directory", id="cwd")

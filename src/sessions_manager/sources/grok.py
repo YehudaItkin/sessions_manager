@@ -74,13 +74,17 @@ class Adapter:
             return None
 
     def read_history(self, session):
+        import hashlib
+        import json
         from pathlib import Path
 
         from ..models import HistoryEvent, HistoryResult, identity
         from .base import json_lines
+        from .jsonl_cursor import project
 
         path = Path(session.locator)
         events = {}
+        packets = {}
         state = "complete"
         previous = None
         summary = json_file(path / "summary.json")
@@ -102,6 +106,15 @@ class Adapter:
                 kind = update.get("sessionUpdate")
                 meta = {**params.get("_meta", {}), **update.get("_meta", {})}
                 event_id = meta.get("eventId")
+                if isinstance(event_id, str) and event_id:
+                    signature = hashlib.sha256(
+                        json.dumps(project(params), sort_keys=True).encode()
+                    ).hexdigest()
+                    if event_id in packets:
+                        if packets[event_id] != signature:
+                            state = "partial"
+                        continue
+                    packets[event_id] = signature
                 message_id = update.get("messageId") or meta.get("messageId")
                 prompt_id = meta.get("promptId")
                 if kind in ("tool_call", "tool_call_update"):

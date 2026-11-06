@@ -367,9 +367,7 @@ def finish(options, result, *, require_search=False):
 
 
 def overview_data(catalog, rows, query=None):
-    from .models import short_handles
-
-    handles = short_handles(catalog.sessions(include_missing=True))
+    handles = catalog.handles()
     return {
         "items": rows,
         "handles": {s.session_uid: handles[s.session_uid] for s in rows},

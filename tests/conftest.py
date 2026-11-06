@@ -10,6 +10,9 @@ def pytest_addoption(parser):
     parser.addoption("--run-warp", action="store_true", default=False)
     parser.addoption("--corpus", type=Path, default=None)
     parser.addoption("--codex-archive-executable", type=Path, default=None)
+    parser.addoption("--claude-resume-executable", type=Path, default=None)
+    parser.addoption("--grok-resume-executable", type=Path, default=None)
+    parser.addoption("--cursor-resume-executable", type=Path, default=None)
 
 
 @pytest.fixture(autouse=True)

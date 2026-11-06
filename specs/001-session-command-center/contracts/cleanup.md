@@ -126,6 +126,10 @@ recovery сверяет manifest, expected hashes/locations и реальные 
 валидируется до файлового доступа и повторно используется только с exact manifest.
 Если terminal item уже сохранён, но lifecycle owner ещё не снят, Retry остаётся видимым
 до согласования результата. Исходный journal не удаляется ради разблокировки.
+Открытие списка проверяет форму progress/TrashEntry и immutable manifest существующей
+записи. Повреждение JSON, denied/missing storage и initialization/I/O errors дают безопасную
+ошибку, а не пустой успешный список. TUI сохраняет overview и выбранный ID; содержимое
+исключения/журнала не выводится, automatic repair/unlock отсутствуют.
 Crash между rename и записью стадии не
 считается автоматически ни успехом, ни потерей. Если есть различающиеся версии, обе
 сохраняются и нужен явный recovery/restore, а не скрытый overwrite.

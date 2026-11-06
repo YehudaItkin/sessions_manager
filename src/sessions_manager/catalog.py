@@ -29,6 +29,47 @@ def session_payload(payload):
         raise Failure("catalog_record_invalid", 6) from None
 
 
+def usage_payload(value):
+    """Validate private per-location normalized evidence before restoring its ledger."""
+    from .models import (
+        COMPLETENESS,
+        ContextMetric,
+        UsageFact,
+        UsageMembership,
+        UsageResult,
+        UsageSnapshot,
+    )
+
+    try:
+        if value["state"] not in COMPLETENESS:
+            raise ValueError()
+        return UsageResult(
+            facts=[UsageFact(**v) for v in value["facts"]],
+            snapshots=[UsageSnapshot(**v) for v in value["snapshots"]],
+            memberships=[UsageMembership(**v) for v in value["memberships"]],
+            context_metrics=[ContextMetric(**v) for v in value["context_metrics"]],
+            state=value["state"],
+            reason=value["reason"],
+        )
+    except (TypeError, ValueError, KeyError, AttributeError):
+        raise Failure("catalog_record_invalid", 6) from None
+
+
+def usage_signature(value):
+    # Physical stat revisions and time-varying context occupancy are observations,
+    # not lifetime accounting differences between copies.
+    normalized = public(usage_payload(value))
+    normalized.pop("context_metrics")
+    for fact in normalized["facts"]:
+        fact.pop("evidence_revision")
+    for snapshot in normalized["snapshots"]:
+        snapshot.pop("native_revision")
+        snapshot["covered_fact_ids"].sort()
+    for field in ("facts", "snapshots", "memberships"):
+        normalized[field].sort(key=lambda item: json.dumps(item, sort_keys=True))
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest()
+
+
 CATALOG_SCHEMA = 4
 
 SCHEMA = """
@@ -292,6 +333,11 @@ class Catalog:
                             "session": public(session),
                             "cycle": getattr(root, "_scan_cycle", None),
                             "stage": scan.stage if scan else "complete",
+                            "usage": public(
+                                (usages or {}).get(
+                                    getattr(session, "_scan_data_key", session.session_uid)
+                                )
+                            ),
                         }
                     )
                     if needs_alias or session.extra.get("native_archive_observed_at")
@@ -356,24 +402,7 @@ class Catalog:
                     and session.session_uid not in protected
                 ):
                     self._replace_history(db, session, histories[data_key])
-            if usages:
-                seen = set()
-                for incoming in sessions:
-                    if incoming.session_uid in seen:
-                        continue
-                    seen.add(incoming.session_uid)
-                    session = self.get(incoming.session_uid)
-                    source = native_sources.get(location_key(session))
-                    data_key = (
-                        getattr(source, "_scan_data_key", source.session_uid) if source else None
-                    )
-                    if (
-                        data_key in usages
-                        and session.session_uid not in protected
-                        and (chosen := self.get(session.session_uid)).root_id == root.root_id
-                        and chosen.extra.get("identity_conflict") != "identity_conflict"
-                    ):
-                        self._replace_usage(db, session, usages[data_key])
+            affected = []
             if publication_complete:
                 affected = [
                     r[0]
@@ -401,6 +430,37 @@ class Catalog:
                 db.execute(
                     "UPDATE sessions SET presence='missing' WHERE presence IN ('present','source_unavailable','missing') AND uid NOT IN (SELECT uid FROM locations)"
                 )
+            # Reconcile after all locations and verified absences are published.
+            # Never let a provisional alias update shared request facts first.
+            usage_uids = ({s.session_uid for s in sessions} if usages else set()) | set(affected)
+            for uid in usage_uids - protected:
+                current = self.get(uid)
+                has_evidence = db.execute(
+                    "SELECT 1 FROM locations WHERE uid=? AND payload IS NOT NULL", (uid,)
+                ).fetchone()
+                if has_evidence:
+                    chosen = self._alias_session(
+                        db,
+                        current,
+                        getattr(root, "_identity_root_ids", [root.root_id]),
+                        getattr(root, "_scan_cycle", None),
+                    )
+                    chosen.hidden, chosen.presence = current.hidden, current.presence
+                    chosen.current_generation = current.current_generation
+                    if current.extra.get("history_conflict"):
+                        chosen.extra["history_conflict"] = current.extra["history_conflict"]
+                        for field in ("history_state", "search_state"):
+                            if getattr(chosen, field) == "complete":
+                                setattr(chosen, field, "partial")
+                    self._save_session(db, chosen)
+                    value = getattr(chosen, "_alias_usage_payload", None)
+                    if value is not None:
+                        self._replace_usage(db, chosen, usage_payload(value))
+                elif usages:
+                    source = native_sources.get(location_key(current))
+                    key = getattr(source, "_scan_data_key", source.session_uid) if source else None
+                    if key in usages and current.root_id == root.root_id:
+                        self._replace_usage(db, current, usages[key])
             owners = {s.locator: s for s in sessions} if cursors else {}
             for path, checkpoint in (cursors or {}).items():
                 owner = owners.get(path)
@@ -498,7 +558,9 @@ class Catalog:
         chosen.extra["identity_signatures"] = signatures
         chosen.extra.pop("alias_bindings", None)
         chosen.extra.pop("identity_conflict", None)
+        chosen.extra.pop("usage_conflict", None)
         if len(evidence) < 2:
+            chosen._alias_usage_payload = best.get("usage")
             return chosen
         pending = None in signatures.values()
         conflict = not pending and len(set(signatures.values())) > 1
@@ -539,6 +601,28 @@ class Catalog:
                 }
                 for e in evidence
             ]
+        usages = [
+            e.get("usage") if e["stage"] == "complete" and e["cycle"] == cycle else None
+            for e in evidence
+        ]
+        usage_reason = (
+            "usage_binding_unverified"
+            if any(v is None for v in usages)
+            else "usage_identity_conflict"
+            if len({usage_signature(v) for v in usages}) > 1
+            else None
+        )
+        chosen._alias_usage_payload = None if usage_reason or conflict else best.get("usage")
+        if usage_reason:
+            chosen.extra["usage_conflict"] = usage_reason
+            chosen.usage_state = "partial"
+            chosen.capabilities["usage"] = Capability("unavailable", usage_reason)
+        if usage_reason or conflict:
+            db.execute(
+                "DELETE FROM usage_memberships WHERE uid=? OR origin_uid=?",
+                (chosen.session_uid, chosen.session_uid),
+            )
+            db.execute("DELETE FROM usage_snapshots WHERE uid=?", (chosen.session_uid,))
         return chosen
 
     def invalidate_aliases(self, roots, cycle):
@@ -569,6 +653,26 @@ class Catalog:
             session.hidden, session.presence = bool(row["hidden"]), row["presence"]
             result.append(session)
         return result
+
+    def handles(self):
+        """Global collision scope needs identities, not a second full metadata decode."""
+        from types import SimpleNamespace
+
+        from .models import short_handles
+
+        identities = []
+        try:
+            for uid, stored_uid, display in self.connection.execute(
+                "SELECT uid,json_extract(payload,'$.session_uid'),json_extract(payload,'$.display_id') FROM sessions"
+            ):
+                if uid != stored_uid or any(
+                    not isinstance(v, str) or not v.strip() or "\0" in v for v in (uid, display)
+                ):
+                    raise ValueError()
+                identities.append(SimpleNamespace(session_uid=uid, display_id=display))
+        except (ValueError, TypeError, sqlite3.Error):
+            raise Failure("catalog_record_invalid", 6) from None
+        return short_handles(identities)
 
     def get(self, selector):
         prefix = selector[2:] if selector.startswith("s-") else selector

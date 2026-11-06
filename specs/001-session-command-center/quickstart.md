@@ -309,3 +309,35 @@ substitution against an outside sentinel. No outside subtree is listed or counte
 coverage is partial/unknown. Explicit configured root aliases remain supported.
 Config `sources=1`, `[sources]` or `enabled="false"` returns invalid_config/exit 2 before
 runtime state. Valid `enabled=false` skips refresh without changing prior generation/as_of.
+
+
+## Phase 14 checks and native opt-ins
+
+Run synthetic regressions:
+
+```sh
+uv run pytest tests/integration/test_cursor_alias_locations.py \
+  tests/integration/test_alias_usage.py tests/acceptance/test_resume_selection.py \
+  tests/acceptance/test_trash_errors.py tests/contract/test_grok_packets.py -q
+```
+
+These cover per-copy Cursor graphs/IPC, independent usage proof, the Open target through
+refresh/manual-guide retry, safe Trash errors and Grok packet replay/confirmed-tail counts.
+First updated startup rebuilds normalizer-3 history/search/parser caches; IDs/hidden/journal
+are retained. All configured roots of an alias need refresh before usage becomes complete.
+
+Native loading gates are opt-in, for the exact recorded installed versions only:
+
+```sh
+uv run pytest tests/acceptance/test_native_resume_runtime.py \
+  --claude-resume-executable /absolute/path/to/claude \
+  --grok-resume-executable /absolute/path/to/grok \
+  --cursor-resume-executable /absolute/path/to/cursor-agent -q -s
+```
+
+The harness creates fresh artificial histories and default roots inside an isolated child
+HOME; parent HOME/environment is unchanged. macOS sandbox-exec denies network, keychain,
+personal stores and writes outside disposable files. No credentials, prompt, AI turn or
+fallback is supplied. Missing containment refuses the gate. Explicit failures are recorded
+as unverified, never passing; see validation.md for startup limits. This is independent of
+Warp: the recorded denial still forbids its runtime/alternate UI or shell access.

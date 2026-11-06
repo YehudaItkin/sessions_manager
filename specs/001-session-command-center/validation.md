@@ -610,3 +610,97 @@ Release validation:
   checklist remains unchanged at **16/16 PASS**. .specify/extensions.yml is absent;
   pre/post implementation hooks do not apply. Four code tasks complete; external Warp
   remains open independently.
+
+
+## Phase 14 convergence implementation — 2026-11-06
+
+- T162: **6 initial RED cases** reproduced Cursor's per-native-ID graph cache mixing
+  accepted physical copies. The cache now uses locator, preserving every copy before
+  metadata/full/warm/IPC agreement. Same/different text/graph, reversed discovery, hidden
+  IDs, verified disappearance and CLI/Pilot checks pass. Initial relevant subset:
+  **45 passed**. A later cache-upgrade Pilot regression failed before TUI startup began
+  rebuilding invalidated indices automatically. Normalizer 4 rebuilds old history/search/
+  parser caches; stable IDs, hidden flags and journals remain. No native writes by readers.
+- T163: **8 RED Pilot cases** reproduced Open selecting the neighbor after refresh or
+  manual-guide retry. The modal now captures/shows its original UID/source observation;
+  every callback keeps it, and changed/missing observations refuse before child/ticket.
+  Current and mocked Warp, filtered/reordered selection, guide retry and Cancel pass.
+  Resume/filter acceptance subset: **23 passed**; final request revalidation is unchanged.
+- T164: **16 initial valid RED cases** reproduced arbitrary complete usage across copies
+  and pending/failed peers. Six other initial conflict fixtures were corrected to vary
+  output as well as supplied total, since the adapter derives total from input/output.
+  Current-cycle normalized usage evidence now reconciles independently of history, after
+  all locations/verified absences publish. Conflicting/pending values remain unknown/partial
+  without hiding agreed history. Same-/cross-root Claude receipts, Codex ownership, Grok
+  snapshots, publication order, warm IPC, unknown/cancelled peers, disappearance and shared
+  healthy receipts pass. A purge-retention regression failed before clearing owned location
+  payloads; another failed before preserving shared-event revision guards through the new
+  usage publication pass. Alias/history subset after that correction: **71 passed**.
+  Schema stays v4; rare aliases retain normalized counters/observations, never native
+  transcript copies. Existing within-stream Claude monotonic reconciliation remains.
+- T165: **6 RED Pilot cases** reproduced initialization/listing exceptions and invalid,
+  missing or denied Trash records/manifests. Safe error handling keeps the healthy overview
+  and selection, preserves journal/payload and does not print exception/record contents.
+  Progress/TrashEntry/manifest validation rejects corruption rather than showing successful
+  empty recovery. Trash/recovery/CLI subset: **59 passed**, with no automatic repair/unlock.
+- T166: **5 RED cases** reproduced repeated Grok packets doubling text or reverting a
+  completed tool status. Exact eventId replay is now idempotent; conflicting packet payloads
+  make history partial, while different IDs with identical text remain legitimate chunks.
+  Confirmed-tail/warm replay, order/search/message/tool counts and usage pass. Relevant
+  Grok/checkpoint/history/alias subset: **60 passed**. No new guessed native format.
+- T167 remains **OPEN / PARTIAL**. Added explicit per-provider native current-terminal
+  opt-ins with disposable histories, a child-only isolated HOME/minimal environment and
+  macOS sandbox denial of network, keychain, personal stores/shared temporary data and
+  outside writes. Parent HOME is unchanged; no credentials/prompt/AI turn/fallback supplied.
+  Containment/receipt/exact-version tests: **7 passed**. These began RED for the missing
+  harness, group-signal cleanup denial, shared-temp access and three version-prefix cases.
+  The harness now cleans only its owned child and rejects unsupported version suffixes
+  before resume; containment failure has no unrestricted fallback.
+- Explicit installed Claude **2.1.299**, Grok **1.0.70**, Cursor **2026.10.22-27dcf5f**
+  current-terminal run: **3 FAILED / unverified**, not passing. None displayed the generated
+  marker or proved live cwd; all retained original IDs, no new sessions and neighbor bytes.
+  Grok requires authentication during restore, which the offline boundary prevents. Cursor
+  attempts a fixed shared /tmp/.cursor directory outside the disposable scope and is denied.
+  Claude initially attempted /tmp/claude-<uid>; test-only temp settings now point inside the
+  fixture, but loading still was not proved and its remaining startup cause is unverified.
+  These limitations are not bypassed using personal stores, credentials or relaxed isolation.
+  Warp T113/T130/T144/T154/T159 stays **BLOCKED** by the prior dev.warp.Warp-Stable access
+  denial; no Warp attempt/alternate UI or shell route. T118 and Grok shared-index cleanup
+  stay unavailable/conditional. Codex 0.167.0 archive is not enabled; SC-003 owner timing is
+  still a separate unperformed measurement.
+
+Release checks:
+- Final `uv run pytest -q --tb=short`: **546 passed, 10 skipped**, 109.79 s. Default skips:
+  five corpus gates, native Codex opt-in, blocked native Warp opt-in, three new native
+  current-terminal opt-ins. The latter's explicit failures above remain open, not reclassified
+  as passes. Ruff check/format (**123 Python files**) and whitespace checks pass.
+- First isolated SC-002: cold **7.556 s** passed, warm search/navigation **2.036 s** failed
+  the unchanged <=2 s target; other warm gates passed. A component/profile probe is excluded
+  from release timing. It found two complete 10,000-session decodes per list; the second
+  only built global short handles. Identity-only projection removes that redundant work,
+  retaining typed candidate decoding and hidden/missing/archived collision scope. Existing
+  global-handle/pagination/CLI/catalog subset: **49 passed**; full suite repeated afterward.
+- Final isolated SC-002: **5 passed**. Cold **9.816 s** (<=10); warm search/navigation
+  **1.349 s**, TUI first frame **1.379 s**, combined filter/sort **0.436 s**, TUI sort
+  **1.318 s** (each <=2). Same reused seed-1 10,000-session corpus; requested 1,073,741,824
+  bytes / actual native bytes **1,130,076,804**. Fresh private catalog; OS caches warm from
+  prior reads/profile and not flushed. No concurrent pytest/build/native smoke during this
+  final measurement. Targets unchanged. CPython **3.14.2**, SQLite **3.50.4**, macOS
+  **27.0.1 arm64**, Apple M3 Pro / 18 GiB. Provenance:
+  {"schema":4,"minimum_start":1793964794437,"maximum_finish":1793964800807,"root_as_of":{"codex":1793964798434,"claude":1793964796994,"grok":1793964800807,"cursor":1793964800108}}.
+- Wheel/sdist build and locked outside-checkout installed-wheel smoke: **PASS**, Python
+  **3.12.12 / SQLite 3.54.1**. Help/version/refresh/list/show/stats/resume dry-run, hide/unhide,
+  storage/date provenance and two trash/restore/purge cycles pass on 40 artificial sessions;
+  all original native hashes match. Wheel SHA-256:
+  **2ad5977c634c78b14056a2c6afdccf716157021c5988b28e401d66ff509abbbd**.
+- Supported actual Codex **0.166.0** archive gate: **1 passed**, 2.44 s, disposable offline
+  CODEX_HOME. Installed Python 3.12 console also passes archive/archives/unarchive/refresh/
+  show/hide/unhide, restoring original flags/history/IDs/neighbor across restart. Fixture
+  graph seeding stays test-only; production code contains no native shared-DB DML.
+- Sole-maintainer self-review recorded: spec/plan/tasks/constitution traceability, observed
+  RED-to-GREEN boundaries, per-location evidence and lifetime scope, pinned resume targets,
+  safe recovery errors, packet replay, lifecycle-owned evidence retention, legacy cache
+  rebuilding, truthful native acceptance, package/privacy and unchanged SC-002 checked.
+  No new runtime dependency/service/schema/native capability. Checklist remains read-only
+  **16/16 PASS**; hooks file absent. Five code tasks complete; T167 and earlier independent
+  native gates remain open. Documentation links/fences and source/artifact privacy reviewed.

@@ -38,6 +38,8 @@ _MESSAGES = {
     "cross_device_unavailable": "The source and manager trash are on different volumes. Use Hide, or configure manager data on the same volume.",
     "handle_probe_unavailable": "Open-session checks are unavailable. Check that lsof is installed and accessible before retrying cleanup.",
     "source_changed": "The session changed since it was selected. Refresh (F5) and try again.",
+    "usage_identity_conflict": "Copies of this session contain different usage evidence. Lifetime totals are unavailable until the copies agree; refresh after resolving the difference.",
+    "usage_binding_unverified": "Usage has not been verified for every copy of this session. Refresh all configured roots; lifetime totals remain incomplete.",
     "executable_changed": "The native CLI changed. Refresh (F5) and prepare the operation again.",
     "native_cascade_unbounded": "Codex archive/delete can also affect descendant sessions. Safe trash is unavailable for this profile; use the separate native Archive action for verified closed stores, or Hide to remove it from the manager view.",
     "shared_dependency_unverified": "This session has a shared index or related sessions whose cleanup is not verified. Use Hide, or manage it in the native CLI.",
