@@ -80,6 +80,7 @@ class CleanupScreen(ModalScreen):
                     "archive": "Archive in Codex (history retained)",
                     "unarchive": "Restore original Codex archive flags",
                     "archive-retry": "Retry the same native archive operation",
+                    "cleanup-retry": "Retry the same cleanup operation",
                 }[self.plan["action"]],
                 markup=False,
             )
@@ -120,7 +121,8 @@ class CleanupScreen(ModalScreen):
 
 
 class TrashScreen(ModalScreen):
-    BINDINGS = [("escape", "cancel", "Close"), ("r", "restore", "Restore")]
+    BINDINGS = [("escape", "cancel", "Close"), ("r", "restore", "Restore"), ("x", "retry", "Retry")]
+    CSS = "#trash-table {height: 1fr;} .trash-actions {height: 3;}"
 
     def __init__(self, items, on_action):
         super().__init__()
@@ -132,22 +134,24 @@ class TrashScreen(ModalScreen):
 
         yield Static("Manager trash: exact recoverable entries and recovery states", markup=False)
         yield DataTable(id="trash-table", cursor_type="row")
-        yield Button("Close", id="cancel")
-        yield Button("Restore selected (r)", id="restore")
-        yield Button("Purge selected (irreversible)", id="purge", variant="error")
+        with Horizontal(classes="trash-actions"):
+            yield Button("Close", id="cancel")
+            yield Button("Restore (r)", id="restore")
+            yield Button("Retry (x)", id="retry")
+            yield Button("Purge", id="purge", variant="error")
 
     def on_mount(self):
         from textual.widgets import DataTable
 
         table = self.query_one(DataTable)
-        table.add_columns("Trash ID", "Session ID", "State", "Actions")
+        table.add_columns("Trash / operation ID", "Session ID", "State / stage", "Actions")
         for item in self.items:
             table.add_row(
-                item["trash_id"],
+                item["trash_id"] or item["operation_id"],
                 item["session_id"],
-                item["state"],
+                item["state"] + " / " + item.get("stage", item["state"]),
                 ", ".join(item["available_actions"]),
-                key=item["trash_id"],
+                key=item.get("item_id") or item["trash_id"],
             )
         self.query_one("#cancel", Button).focus()
 
@@ -163,6 +167,9 @@ class TrashScreen(ModalScreen):
     def action_restore(self):
         self.selected_action("restore")
 
+    def action_retry(self):
+        self.selected_action("retry")
+
     def selected_action(self, action):
         from textual.widgets import DataTable
 
@@ -170,7 +177,12 @@ class TrashScreen(ModalScreen):
         if not table.row_count:
             return
         key = str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
-        item = next(row for row in self.items if row["trash_id"] == key)
+        item = next(row for row in self.items if (row.get("item_id") or row["trash_id"]) == key)
+        if action == "retry":
+            if "retry_same_confirmation" in item["available_actions"]:
+                self.dismiss(None)
+                self.on_action("cleanup-retry", [item["operation_id"]])
+            return
         if action not in item["available_actions"]:
             return
         self.dismiss(None)

@@ -421,3 +421,34 @@ unchanged history/graph and trusted existing ancestors. Newly created native dir
 are allowed; replacement of previously proven common ancestors is not. Current references
 are validated and journaled for same-scope retry; unexpected rewrites remain conflicts.
 Reference evidence stores path, revision and existing ancestor stat identity, not bodies.
+
+
+## Phase 13 implementation decisions — 2026-11-06
+
+T157 extends the existing location evidence/reconciler to (root_id, locator), including
+multiple copies within one root. Scan history/usage/IPC buffers retain per-location keys
+until identity agreement; cached reuse requires the same location. Rare alias groups
+compute the existing graph/content digest. Existing SessionLocation payloads store proof;
+no new service/dependency/table is required. A stable location order chooses a representative
+only after agreement; conflicts suppress content/actions. Cleanup requires one physical
+location and binds rediscovery to its locator and confirmed inventory. Resume verifies
+every agreed physical copy and refuses a new/unverified copy. Retaining a single UID map
+or choosing the first native ID match loses evidence and can target another copy.
+
+T158 exposes durable operation items before TrashEntry creation and while a terminal
+item still owns a pending lifecycle. Recovery rows identify an operation/item, separately
+from recoverable trash copies, and retry the original scope without generic unlocking.
+The journal reserves a validated trash ID before directory/manifest creation; restart
+reconciles only that ID and exact immutable manifest. Reusing only the TrashEntry query
+would lose pre-entry recovery, while allocating a fresh ID on retry would leak staging.
+T160 hardens the existing bounded enumerator against intermediate symlinks, including
+fallback storage roots; unsupported links are partial, not a successful empty result.
+Directory descriptors are opened component by component with O_NOFOLLOW relative to
+the configured root; inode/device checks reject substitutions before descent. A leaf
+lstat alone cannot protect intermediate components. The explicitly configured root
+binding may resolve an alias, while links below it do not authorize a new subtree.
+Storage reuses this boundary helper and keeps metadata-only cached observations;
+opening stats still performs no source enumeration.
+T161 validates TOML container shapes and exact boolean control fields before runtime
+preparation. All preserve existing profiles, recovery/privacy constraints and SC-002;
+T159 remains an independent blocked Warp gate.

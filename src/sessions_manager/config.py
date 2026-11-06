@@ -51,6 +51,9 @@ class Config:
         mode = raw.get("discovery_roots_mode", "extend")
         if mode not in ("extend", "replace"):
             raise Failure("invalid_config", 2)
+        sources = raw.get("sources", [])
+        if not isinstance(sources, list) or any(not isinstance(item, dict) for item in sources):
+            raise Failure("invalid_config", 2)
         roots = []
         if mode != "replace":
             homes = {
@@ -74,7 +77,7 @@ class Config:
                         resume_context="native",
                     )
                 )
-        for item in raw.get("sources", []):
+        for item in sources:
             try:
                 provider, source = item["provider"], Path(item["path"]).expanduser()
                 if not source.is_absolute():

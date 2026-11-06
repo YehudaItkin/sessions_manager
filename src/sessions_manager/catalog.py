@@ -10,11 +10,12 @@ import sqlite3
 import threading
 import uuid
 import zlib
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
 from .config import ensure_private
-from .models import Failure, Session, now_ms, public
+from .models import Failure, Session, location_key, now_ms, public
 
 
 def unpack(value):
@@ -225,6 +226,8 @@ class Catalog:
                         session.extra["native_archive_observed_at"] = stamp
                 reconciled.append(session)
             sessions = reconciled
+            native_sources = {location_key(s): s for s in sessions}
+            counts = Counter(s.session_uid for s in sessions)
             publication_complete = complete and not protected
             if protected:
                 reason = (
@@ -278,6 +281,11 @@ class Catalog:
                 active_roots = getattr(session, "_identity_root_ids", [root.root_id])
                 incoming_root = session.root_id
                 native_verified = getattr(session, "_native_history_verified", False)
+                needs_alias = (
+                    len(active_roots) > 1
+                    or counts[session.session_uid] > 1
+                    or getattr(session, "_compare_identity", False)
+                )
                 native = (
                     json.dumps(
                         {
@@ -286,7 +294,7 @@ class Catalog:
                             "stage": scan.stage if scan else "complete",
                         }
                     )
-                    if len(active_roots) > 1 or session.extra.get("native_archive_observed_at")
+                    if needs_alias or session.extra.get("native_archive_observed_at")
                     else None
                 )
                 # Store per-location native evidence before applying aggregate guards.
@@ -307,17 +315,15 @@ class Catalog:
                     "INSERT INTO locations(uid,root_id,locator,generation,payload) VALUES (?,?,?,?,?) ON CONFLICT(uid,root_id,locator) DO UPDATE SET generation=excluded.generation,payload=excluded.payload",
                     (session.session_uid, root.root_id, session.locator, generation, native),
                 )
-                if len(active_roots) > 1:
+                if needs_alias:
                     chosen = self._alias_session(
                         db, session, active_roots, getattr(root, "_scan_cycle", None)
                     )
-                    if (
-                        chosen.root_id == incoming_root
-                        and chosen.extra.get("identity_conflict") != "identity_conflict"
-                        and hasattr(session, "_prepared_chunks")
-                    ):
-                        chosen._prepared_chunks = session._prepared_chunks
                     session = chosen
+                source = native_sources.get(location_key(session))
+                data_key = getattr(source, "_scan_data_key", source.session_uid) if source else None
+                if source is not None and hasattr(source, "_prepared_chunks"):
+                    session._prepared_chunks = source._prepared_chunks
                 session.current_generation = generation
                 if previous:
                     session.hidden = bool(previous["hidden"])
@@ -342,21 +348,32 @@ class Catalog:
                         (session.session_uid, session.session_uid),
                     )
                     db.execute("DELETE FROM usage_snapshots WHERE uid=?", (session.session_uid,))
+                    db.execute("DELETE FROM context_metrics WHERE uid=?", (session.session_uid,))
                 if (
                     histories
-                    and session.session_uid in histories
+                    and data_key in histories
+                    and session.extra.get("identity_conflict") != "identity_conflict"
                     and session.session_uid not in protected
                 ):
-                    self._replace_history(db, session, histories[session.session_uid])
+                    self._replace_history(db, session, histories[data_key])
             if usages:
-                for session in sessions:
+                seen = set()
+                for incoming in sessions:
+                    if incoming.session_uid in seen:
+                        continue
+                    seen.add(incoming.session_uid)
+                    session = self.get(incoming.session_uid)
+                    source = native_sources.get(location_key(session))
+                    data_key = (
+                        getattr(source, "_scan_data_key", source.session_uid) if source else None
+                    )
                     if (
-                        session.session_uid in usages
+                        data_key in usages
                         and session.session_uid not in protected
                         and (chosen := self.get(session.session_uid)).root_id == root.root_id
                         and chosen.extra.get("identity_conflict") != "identity_conflict"
                     ):
-                        self._replace_usage(db, session, usages[session.session_uid])
+                        self._replace_usage(db, session, usages[data_key])
             if publication_complete:
                 affected = [
                     r[0]
@@ -372,11 +389,14 @@ class Catalog:
                 for uid in affected:
                     current = self.get(uid)
                     active = getattr(root, "_identity_root_ids", [root.root_id])
-                    if len(active) > 1:
+                    if db.execute(
+                        "SELECT 1 FROM locations WHERE uid=? AND payload IS NOT NULL", (uid,)
+                    ).fetchone():
                         revised = self._alias_session(
                             db, current, active, getattr(root, "_scan_cycle", None)
                         )
                         revised.hidden, revised.presence = current.hidden, current.presence
+                        revised.current_generation = current.current_generation
                         self._save_session(db, revised)
                 db.execute(
                     "UPDATE sessions SET presence='missing' WHERE presence IN ('present','source_unavailable','missing') AND uid NOT IN (SELECT uid FROM locations)"
@@ -426,7 +446,7 @@ class Catalog:
 
         evidence = []
         for row in db.execute(
-            "SELECT root_id,payload FROM locations WHERE uid=?", (incoming.session_uid,)
+            "SELECT root_id,locator,payload FROM locations WHERE uid=?", (incoming.session_uid,)
         ):
             if row["root_id"] not in active_roots:
                 continue
@@ -434,7 +454,18 @@ class Catalog:
                 item = json.loads(row["payload"])
                 item["session"] = Session.from_dict(item["session"])
             else:
-                item = {"session": incoming, "cycle": None, "stage": "metadata"}
+                from dataclasses import replace
+
+                item = {
+                    "session": replace(
+                        incoming,
+                        root_id=row["root_id"],
+                        locator=row["locator"],
+                        extra=dict(incoming.extra),
+                    ),
+                    "cycle": None,
+                    "stage": "metadata",
+                }
             evidence.append(item)
         if not evidence:
             return incoming
@@ -446,17 +477,20 @@ class Catalog:
                 and bool(item["session"].extra.get("identity_digest"))
             )
 
-        best = max(
+        best = min(
             evidence,
             key=lambda item: (
-                full(item),
-                item["cycle"] == cycle,
-                item["session"].root_id == incoming.root_id,
+                not full(item),
+                item["cycle"] != cycle,
+                item["session"].root_id != incoming.root_id,
+                (item["session"].locator != incoming.locator) if not full(item) else False,
+                item["session"].root_id,
+                item["session"].locator,
             ),
         )
         chosen = best["session"]
         signatures = {
-            e["session"].root_id: e["session"].extra.get("identity_digest")
+            location_key(e["session"]): e["session"].extra.get("identity_digest")
             if full(e) and e["cycle"] == cycle
             else None
             for e in evidence
@@ -512,8 +546,6 @@ class Catalog:
         with self.writer() as db:
             for root in roots:
                 active = root._identity_root_ids
-                if len(active) < 2:
-                    continue
                 uids = [
                     r[0]
                     for r in db.execute(

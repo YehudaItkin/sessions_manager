@@ -266,3 +266,20 @@ Metadata-only phases do not replace size observations. Failed refresh/mutations 
 previous evidence stale. File bodies, credentials and manager trash are excluded.
 All adapters annotate naive timestamps as ambiguous without assigning a timezone;
 missing and invalid timestamps have separate reasons. Known aware bounds are preserved.
+
+
+## Phase 13 physical-location and no-follow amendment — 2026-11-06
+
+Discovery retains every physical (root_id, locator) for a namespace/native ID, including
+duplicates in one root. History/usage and worker transport keep per-location evidence
+until content/cwd/graph agreement. Metadata alone does not prove agreement. Conflicting
+copies suppress indexed content/usage and resume/cleanup; matching aliases share one
+manager row, while cleanup still requires one location. Warm/reversed enumeration and
+verified disappearance preserve the stable UID and hidden state.
+
+Known-layout and fallback enumeration bind directory descriptors to the explicit root,
+open each descendant with O_NOFOLLOW and compare device/inode before descent. Matched
+links (including dangling links), denied parents and substituted directories give partial
+enumeration/storage reasons, never complete empty zero. An explicitly configured root
+alias remains valid; resolving an intermediate link does not authorize outside traversal.
+Storage uses metadata only, retains inode dedup/as_of, and is not remeasured on stats open.

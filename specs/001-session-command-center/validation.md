@@ -531,3 +531,82 @@ Validation after implementation:
   Requirements checklist is unchanged at **16/16 PASS**. .specify/extensions.yml absent;
   pre/post implementation hooks do not apply. Five Phase 12 code tasks are complete;
   the external Warp gate remains unmarked.
+
+
+## Phase 13 convergence implementation — 2026-11-06
+
+- T157: **10 initial failing regressions** reproduced same-root physical copies losing
+  history/usage identity or selecting a different cleanup artifact. Per-location scan,
+  catalog evidence and worker IPC now preserve every copy until agreement. Identical
+  copies share one row; body/cwd/graph conflicts expose no arbitrary content/usage and
+  block actions. Metadata/full/warm/reversed enumeration, disappearing copies, hidden
+  state, pickled transport, CLI show/search/stats and 80x24 Pilot checks pass. Resume
+  verifies every location/fingerprint; cleanup requires exactly one and rejects a new
+  duplicate after preview before any move. Relevant alias/history/launch/cleanup subset:
+  **68 passed**. Existing cross-root and lifecycle/archive fences remain intact.
+- T158: **7 initial failing regressions** reproduced five durable interruption stages
+  plus pre-entry CLI/Pilot recovery. Operation rows are now visible before TrashEntry
+  creation, with original operation/target/stage and no claimed recoverable copy. Retry
+  uses the original confirmation/scope; terminal items with pending ownership stay
+  retryable. Staging intent reserves one trash ID before directory/manifest creation;
+  restart validates/reuses it and verifies exact manifests. Cleanup subset: **52 passed**.
+  A follow-up corrupt absolute staged-ID regression failed before validation was moved
+  ahead of every path access; it now returns invalid_trash_id without outside creation.
+  Source/neighbor bytes, no-overwrite, per-item batch outcomes and ownership release pass.
+- T160: **8 failing synthetic link regressions** reproduced workspace/session/dangling
+  links and intermediate substitution in narrow Grok/Cursor fallback storage. Descriptor
+  traversal now binds to the configured root, opens descendants with O_NOFOLLOW and
+  checks inode/device before descent. External sentinels are never enumerated/counted;
+  unsafe/denied paths remain partial/unknown. Explicit root aliases, overlap dedup,
+  cached as_of and no-stats-open I/O are preserved. Storage/discovery/local-alias and
+  Cursor/Grok metadata subset: **52 passed**. Existing denied-listing tests still inject
+  the same denial, identifying descriptor targets by inode rather than assuming paths.
+- T161: **13 expected failing regressions** (after correcting a test-scaffold import)
+  reproduced malformed source containers/items and non-boolean control flags. Config
+  rejects shapes and enabled types before runtime; SourceRoot validates enabled and
+  default_root on construction/deserialization. Invalid config yields safe invalid_config
+  with exit 2, without config contents or data-dir creation. Valid enabled=false retains
+  prior root generation/as_of and sessions. Config/model/CLI subset: **52 passed**.
+- T159/T113/T130/T144/T154: **BLOCKED** by the recorded Computer Use denial for
+  dev.warp.Warp-Stable. No runtime attempt or alternative shell/UI route was used. URI
+  delivery remains unverified as a conversation handoff. T118 stays conditional; Grok
+  shared-index cleanup stays unavailable. Codex 0.167.0 archive is not enabled: the
+  approved profile remains actual native 0.166.0.
+
+Release validation:
+- `uv run pytest -q --tb=short`: **471 passed, 7 skipped**, 100.67 s. Default skips are
+  five explicit-corpus performance gates, native Codex opt-in and blocked native Warp;
+  performance and supported native Codex are validated separately below.
+- `uv run ruff check src tests`, `uv run ruff format --check src tests` (**114 Python
+  files**) and `git diff --check`: **PASS**.
+- `uv run pytest tests/acceptance/test_codex_archive_runtime.py
+  --codex-archive-executable <retained-0.166.0-binary> -q --tb=short`: **1 passed**, 2.01 s.
+  Disposable offline CODEX_HOME only; archive/unarchive cascade, original flags,
+  history/IDs, neighbor and restart pass. No personal histories or credentials opened.
+- Isolated `uv run pytest tests/performance --corpus <seed-1-corpus> -q -s --tb=short`:
+  **5 passed**. Cold **8.533 s** (<=10); warm search/navigation **1.546 s**, TUI first
+  frame **1.432 s**, combined filter/sort **0.612 s**, TUI sort **1.344 s** (each <=2).
+  Reused synthetic corpus: 10,000 mixed sessions, requested 1,073,741,824 bytes / actual
+  native bytes **1,130,076,804**. Fresh private manager catalog; OS caches were warm and
+  were not flushed. No concurrent tests/build/native smoke during measurement; targets
+  unchanged. CPython **3.14.2**, SQLite **3.50.4**, macOS **27.0.1 arm64**, Apple M3 Pro /
+  18 GiB. Provenance:
+  {"schema":4,"root_as_of":{"codex":1793953237767,"grok":1793953240395,"claude":1793953237997,"cursor":1793953241162},"minimum_start":1793953235368,"maximum_finish":1793953241162}.
+- Wheel/sdist build and outside-checkout locked installed-wheel smoke: **PASS** on
+  Python **3.12.12 / SQLite 3.54.1**. Help/version/refresh/list/show/stats/resume dry-run,
+  hide/unhide, storage/date provenance and two trash/restore/purge cycles pass for 40
+  synthetic sessions; original native hashes remain identical. The installed console
+  also passes the actual 0.166.0 archive/archives/unarchive/refresh/show/hide/unhide gate,
+  restoring original flags/history/IDs/neighbor across restart.
+  Final wheel SHA-256: 40fd49069f363455b24404d671632df71b9d468c28c8b1fa533308bd15b15704.
+  Ten changed Markdown documents pass fenced-block and local-link validation.
+- Sole-maintainer self-review recorded: FR-004/006/009/014–019/023–026, Phase 13 findings,
+  constitution and final docs checked. Reviewed RED-before-fix evidence, per-location
+  publication/IPC, exact selected cleanup/resume bindings, durable staging and original
+  operation recovery, descriptor boundaries, typed flags, public CLI/TUI behavior and
+  compatibility. Schema stays v4; existing IDs/hidden state and legacy recovery remain,
+  old unverified location evidence needs refresh. No new dependency/service, production
+  native DB DML, personal session operation or new unsafe capability. Requirements
+  checklist remains unchanged at **16/16 PASS**. .specify/extensions.yml is absent;
+  pre/post implementation hooks do not apply. Four code tasks complete; external Warp
+  remains open independently.

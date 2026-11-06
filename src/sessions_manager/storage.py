@@ -8,18 +8,20 @@ from .models import now_ms
 
 
 def measure(root):
+    from .sources.base import source_directory
+
     files, visited = {}, set()
     complete, reason = True, None
     nodes = 0
 
-    def visit(path, depth=0):
+    def visit(fd, name, depth=0):
         nonlocal complete, reason, nodes
         nodes += 1
         if depth > 64 or nodes > 100000:
             complete, reason = False, "storage_enumeration_limit"
             return
         try:
-            info = path.lstat()
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
             key = f"{info.st_dev}:{info.st_ino}"
             if stat.S_ISREG(info.st_mode):
                 files[key] = {"bytes": info.st_size, "mtime_ns": info.st_mtime_ns}
@@ -27,11 +29,18 @@ def measure(root):
                 if key in visited:
                     return
                 visited.add(key)
-                with os.scandir(path) as entries:
-                    for entry in entries:
-                        visit(path / entry.name, depth + 1)
-                        if nodes > 100000:
-                            break
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    actual = os.fstat(child)
+                    if (actual.st_dev, actual.st_ino) != (info.st_dev, info.st_ino):
+                        raise OSError("source directory changed")
+                    with os.scandir(child) as entries:
+                        for entry in entries:
+                            visit(child, entry.name, depth + 1)
+                            if nodes > 100000:
+                                break
+                finally:
+                    os.close(child)
             else:
                 complete, reason = False, "storage_unsafe_artifact"
         except FileNotFoundError:
@@ -40,6 +49,7 @@ def measure(root):
         except OSError:
             complete, reason = False, "storage_unavailable"
 
+    required = set()
     try:
         if not root.path.is_dir():
             raise OSError()
@@ -61,12 +71,19 @@ def measure(root):
                 result = ScanResult()
                 marker = "summary.json" if root.provider == "grok" else "store.db"
                 paths = [p.parent for p in discover_paths(root.path, "*/*/" + marker, result)]
+                required.update(paths)
                 complete, reason = result.complete, result.reason
             if root.provider == "grok":
                 for name in ("session_search.sqlite", "grok.db"):
                     paths.extend(root.path / (name + suffix) for suffix in ("", "-wal", "-shm"))
         for path in paths:
-            visit(path)
+            try:
+                with source_directory(path.parent, root.path) as fd:
+                    visit(fd, path.name, 1 if path in required else 0)
+            except FileNotFoundError:
+                complete, reason = False, "storage_source_changed"
+            except OSError:
+                complete, reason = False, "storage_unavailable"
     except OSError:
         complete, reason = False, "storage_unavailable"
     return {

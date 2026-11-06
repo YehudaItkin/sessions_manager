@@ -29,7 +29,7 @@ class Adapter:
             return result
         home = self.root.path / "chats" if (self.root.path / "chats").is_dir() else self.root.path
         candidates = {}
-        for sidecar in discover_paths(home, "*/*/meta.json", result):
+        for sidecar in discover_paths(home, "*/*/meta.json", result, boundary=self.root.path):
             try:
                 meta = json_file(sidecar)
                 cwd = meta.get("cwd")
@@ -46,7 +46,10 @@ class Adapter:
         self._workspace_cwds = {
             key: next(iter(values)) for key, values in candidates.items() if len(values) == 1
         }
-        for session in read_many(self._discover_one, discover_paths(home, "*/*/store.db", result)):
+        for session in read_many(
+            self._discover_one,
+            discover_paths(home, "*/*/store.db", result, boundary=self.root.path),
+        ):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"
             else:

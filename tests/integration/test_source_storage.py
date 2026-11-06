@@ -14,6 +14,65 @@ def bytes_under(root):
     return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
 
+@pytest.mark.parametrize("provider,marker", [("cursor", "store.db"), ("grok", "summary.json")])
+@pytest.mark.parametrize("level", ["workspace", "session", "dangling", "substitution"])
+def test_fallback_storage_never_enumerates_external_link_targets(
+    tmp_path, monkeypatch, provider, marker, level
+):
+    import os
+
+    import sessions_manager.sources.base as source_base
+    from sessions_manager.models import SourceRoot
+    from sessions_manager.storage import measure
+
+    root = SourceRoot.create(provider, tmp_path / "narrow-history")
+    root.path.mkdir()
+    outside = tmp_path / "external"
+    outside_session = outside / "session"
+    outside_session.mkdir(parents=True)
+    (outside_session / marker).write_text("SYNTHETIC EXTERNAL SENTINEL")
+    workspace = root.path / "workspace"
+    if level in ("workspace", "dangling"):
+        workspace.symlink_to(
+            outside if level == "workspace" else tmp_path / "missing", target_is_directory=True
+        )
+    elif level == "session":
+        workspace.mkdir()
+        (workspace / "session").symlink_to(outside_session, target_is_directory=True)
+    else:
+        local = workspace / "session"
+        local.mkdir(parents=True)
+        (local / marker).write_text("SYNTHETIC LOCAL")
+        discover = source_base.discover_paths
+
+        def swapped(*args, **kwargs):
+            result = discover(*args, **kwargs)
+            workspace.rename(root.path / "saved-workspace")
+            workspace.symlink_to(outside, target_is_directory=True)
+            return result
+
+        monkeypatch.setattr(source_base, "discover_paths", swapped)
+    outside_inodes = {(p.stat().st_dev, p.stat().st_ino) for p in (outside, outside_session)}
+    scandir = os.scandir
+
+    def checked(directory):
+        if isinstance(directory, int):
+            info = os.fstat(directory)
+            assert (info.st_dev, info.st_ino) not in outside_inodes, (
+                "external directory was enumerated"
+            )
+        else:
+            assert not Path(directory).resolve().is_relative_to(outside), (
+                "external directory was enumerated"
+            )
+        return scandir(directory)
+
+    monkeypatch.setattr(os, "scandir", checked)
+    observation = measure(root)
+    assert not observation["complete"]
+    assert not observation["files"] and not observation["known"]
+
+
 def test_shared_codex_storage_is_separate_cached_and_not_per_session(tmp_path, monkeypatch):
     with case(tmp_path, "codex") as (service, root, uid, path, neighbor):
         expected = bytes_under(root.path)
@@ -130,9 +189,11 @@ def test_storage_does_not_follow_links_or_claim_denied_tree_is_empty(tmp_path, m
     assert measure(root)["files"] == {}
     assert not measure(root)["complete"]
     scan = os.scandir
+    target = histories.stat()
 
     def denied(path):
-        if Path(path) == histories:
+        info = os.fstat(path) if isinstance(path, int) else Path(path).stat()
+        if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
             raise PermissionError("synthetic denied listing")
         return scan(path)
 
@@ -140,6 +201,21 @@ def test_storage_does_not_follow_links_or_claim_denied_tree_is_empty(tmp_path, m
     observation = measure(root)
     assert not observation["complete"] and not observation["known"]
     assert observation["reason"] == "storage_unavailable"
+
+
+def test_explicit_configured_read_root_alias_keeps_its_bound_storage(tmp_path):
+    from sessions_manager.models import SourceRoot
+    from sessions_manager.storage import measure
+    from tests.support.cursor_factory import make
+
+    native = tmp_path / "native"
+    make(native)
+    link = tmp_path / "explicit-history-root"
+    link.symlink_to(native, target_is_directory=True)
+    direct = measure(SourceRoot.create("cursor", native))
+    alias = measure(SourceRoot.create("cursor", link, root_kind="explicit"))
+    assert direct["complete"] and alias["complete"]
+    assert alias["files"] == direct["files"]
 
 
 def test_conflicting_shared_file_observations_do_not_become_known_zero(tmp_path):

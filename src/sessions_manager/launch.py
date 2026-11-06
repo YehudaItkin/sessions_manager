@@ -54,6 +54,7 @@ def catalog_alias_binding(data_dir, uid):
             db.execute("PRAGMA query_only=ON")
             db.execute("PRAGMA trusted_schema=OFF")
             row = db.execute("SELECT payload,presence FROM sessions WHERE uid=?", (uid,)).fetchone()
+            locations = set(db.execute("SELECT root_id,locator FROM locations WHERE uid=?", (uid,)))
             if any(r[1] == "lifecycle_pending" for r in db.execute("PRAGMA table_info(sessions)")):
                 pending = db.execute(
                     "SELECT lifecycle_pending FROM sessions WHERE uid=?", (uid,)
@@ -82,7 +83,10 @@ def catalog_alias_binding(data_dir, uid):
         raise Failure(session.extra["identity_conflict"], 5)
     if row[1] != "present":
         raise Failure("source_changed", 5)
-    return session.extra.get("alias_bindings", [])
+    aliases = session.extra.get("alias_bindings", [])
+    if len(locations) > 1 and locations != {(a["root"]["root_id"], a["locator"]) for a in aliases}:
+        raise Failure("identity_binding_unverified", 5)
+    return aliases
 
 
 def build_request(root, session, data_dir, *, cwd=None, target="current"):
@@ -177,20 +181,41 @@ def revalidate(request):
     binding = catalog_alias_binding(request.data_dir, request.session_uid)
     if binding is not None and binding != request.alias_bindings:
         raise Failure("launch_binding_changed", 5)
+    discoveries = {}
     for alias in request.alias_bindings:
         peer = root_from_dict(alias["root"])
-        discovered = adapter(peer).discover()
-        copies = [s for s in discovered.sessions if s.session_uid == request.session_uid]
+        if peer.root_id not in discoveries:
+            discoveries[peer.root_id] = adapter(peer).discover()
+        discovered = discoveries[peer.root_id]
+        copies = [
+            s
+            for s in discovered.sessions
+            if s.session_uid == request.session_uid and s.locator == alias["locator"]
+        ]
+        expected = {
+            a["locator"] for a in request.alias_bindings if a["root"]["root_id"] == peer.root_id
+        }
+        actual = {s.locator for s in discovered.sessions if s.session_uid == request.session_uid}
         if (
             not discovered.complete
+            or actual != expected
             or len(copies) != 1
             or copies[0].fingerprint != alias["fingerprint"]
             or copies[0].locator != alias["locator"]
         ):
             raise Failure("identity_binding_unverified", 5)
     root = root_from_dict(request.source_root)
-    sessions = adapter(root).discover().sessions
-    found = [s for s in sessions if s.session_uid == request.session_uid]
+    sessions = (
+        discoveries[root.root_id].sessions
+        if root.root_id in discoveries
+        else adapter(root).discover().sessions
+    )
+    found = [
+        s
+        for s in sessions
+        if s.session_uid == request.session_uid
+        and (not request.alias_bindings or s.locator == request.history_locator["path"])
+    ]
     if len(found) != 1 or found[0].fingerprint != request.source_fingerprint:
         raise Failure("source_changed", 5)
     rebuilt = build_request(

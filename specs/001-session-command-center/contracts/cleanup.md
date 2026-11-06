@@ -37,6 +37,9 @@ Capability появляется только после fixture-backed дока�
 
 Перед preview:
 1. Разрешить точные стабильные IDs и текущие native locations.
+   Требуется единственная физическая location (root + locator), даже для одинаковых
+   копий внутри одного root. Повторное чтение обязано совпасть с показанной location,
+   fingerprint и подтверждённым inventory; первый найденный native ID недостаточен.
 2. Построить только разрешённый адаптером конечный список owned artifacts/dependencies.
 3. Проверить uid, containment, типы, canonical roots; не обходить symlink для удаления,
    не брать project files и общие DB/history/cache других сессий.
@@ -115,6 +118,14 @@ Missing parent/root возвращает понятную причину; про
 Filesystem и SQLite journal не атомарны вместе. Trash list обозначает незавершённые
 операции как recovery_required. При `trash retry OPERATION_ID [--assert-closed]`
 recovery сверяет manifest, expected hashes/locations и реальные файлы.
+Операция доступна и до создания TrashEntry/manifest: строка kind=operation содержит
+исходные operation_id/target_id, stage, trash_id=null и recoverable_copy=false.
+В TUI Retry (x) показывает прежние цели и требует closed assertion для неизвестной
+активности trash. Restore/purge такой строки недоступны; новый confirmation scope
+не создаётся. Зарезервированный trash ID сохраняется до создания directory/manifest,
+валидируется до файлового доступа и повторно используется только с exact manifest.
+Если terminal item уже сохранён, но lifecycle owner ещё не снят, Retry остаётся видимым
+до согласования результата. Исходный journal не удаляется ради разблокировки.
 Crash между rename и записью стадии не
 считается автоматически ни успехом, ни потерей. Если есть различающиеся версии, обе
 сохраняются и нужен явный recovery/restore, а не скрытый overwrite.

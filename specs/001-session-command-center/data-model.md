@@ -254,7 +254,7 @@ content-free catalog_record_invalid error without automatic repair or data loss.
 
 ## Phase 10 storage amendment — 2026-11-05
 
-- locations.payload is nullable for old/default single-root rows. Multi-root namespaces
+- locations.payload is nullable for old/default single-location rows. Multi-location namespaces
   retain the native session metadata/capabilities, current cycle and metadata/full stage;
   versioned identity digests include conversation graph membership and content. No extra
   transcript bodies are stored there. A new refresh invalidates prior-cycle agreement.
@@ -349,3 +349,27 @@ unchanged history/graph and trusted existing ancestors. Newly created native dir
 are allowed; replacement of previously proven common ancestors is not. Current references
 are validated and journaled for same-scope retry; unexpected rewrites remain conflicts.
 Reference evidence stores path, revision and existing ancestor stat identity, not bodies.
+
+
+## Phase 13 location and recovery observations — 2026-11-06
+
+Physical identity evidence is keyed by (root_id, locator), including duplicate native IDs
+inside one root. Scan/IPC history and usage buffers retain these keys until agreement;
+existing locations.payload stores each copy's native metadata and versioned digest.
+The stable manager UID/hidden state does not change. Matching copies share one row;
+conflicting copies expose no arbitrary history/usage. Old multi-location rows without
+matching evidence require refresh before resume, and cleanup requires one location.
+Catalog schema remains v4; no new table, column, migration or dependency is needed.
+
+OperationItem.trash_id can reserve staging before TrashEntry exists. Recovery must validate
+it before any path use, reuse that exact ID, and verify any existing immutable manifest.
+trash_list is an additive union: kind=trash rows retain trash_id; kind=operation rows have
+trash_id=null, item_id=operation:<operation_id>:<target_id>, target_id and the original
+operation_id. Both expose stage and available_actions. A pre-entry operation has
+recoverable_copy=false; retry_same_confirmation continues the original journal and targets.
+Terminal items that still own lifecycle_pending remain retryable until reconciliation
+clears that owner. No journal deletion or generic unlock is a recovery mechanism.
+
+SourceRoot.enabled/default_root require exact booleans on construction/deserialization.
+Config sources requires an array of objects before runtime preparation; malformed shapes
+or flags yield safe invalid_config/exit 2. Disabled roots retain prior generation/as_of.

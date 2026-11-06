@@ -159,7 +159,8 @@ Native Warp runtime gate T113/T130 remains blocked by Computer Use access policy
 ## Phase 10 alias amendment — 2026-11-05
 
 Known copies of one namespace/native ID require fresh full-history digest agreement in
-one refresh cycle. While peers are pending/failed/cancelled, available history is partial
+one refresh cycle, including multiple physical locators within the same configured root.
+While peers are pending/failed/cancelled, available history is partial
 and resume/cleanup are blocked with identity_binding_unverified. Actual differences in
 content or parent/turn membership produce identity_conflict. Verified empty enumeration
 may remove an absent peer; a failed root never proves absence. Unrelated IDs are isolated.
@@ -170,3 +171,6 @@ construction and handoff consult the current private catalog guard read-only, pr
 single-root rediscovery from dropping an existing alias guard. Handoff rechecks every
 copy; changed evidence refuses exec. Warp uses the same request validation, with no
 change to its externally blocked runtime gate.
+Bindings must cover the exact current set of (root_id, locator), not just distinct roots.
+Rediscovery verifies every copy and its fingerprint; a newly appeared copy blocks handoff.
+For matching copies in one root, resume uses the verified request's selected locator.

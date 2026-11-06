@@ -4,6 +4,78 @@ from sessions_manager.config import Config, ensure_private
 from sessions_manager.models import Failure
 
 
+@pytest.mark.parametrize("sources", [1, {}, True, ["invalid-source"]])
+def test_source_container_shape_is_invalid_config_before_runtime(isolated, sources):
+    import tomli_w
+
+    path, data = isolated
+    path.write_text(tomli_w.dumps({"discovery_roots_mode": "replace", "sources": sources}))
+    with pytest.raises(Failure, match="invalid_config"):
+        Config.load(path, data)
+    assert not data.exists()
+
+
+@pytest.mark.parametrize("enabled", ["false", 0])
+def test_invalid_enabled_type_is_rejected_before_runtime(isolated, tmp_path, enabled):
+    import tomli_w
+
+    path, data = isolated
+    path.write_text(
+        tomli_w.dumps(
+            {
+                "discovery_roots_mode": "replace",
+                "sources": [
+                    {"provider": "claude", "path": str(tmp_path / "source"), "enabled": enabled}
+                ],
+            }
+        )
+    )
+    with pytest.raises(Failure, match="invalid_config"):
+        Config.load(path, data)
+    assert not data.exists()
+
+
+def test_disabled_root_keeps_previous_generation_and_observation(tmp_path):
+    import tomli_w
+
+    from sessions_manager.catalog import Catalog
+    from sessions_manager.discovery import refresh
+    from sessions_manager.models import SourceRoot
+    from tests.support.claude_factory import make
+
+    roots = [SourceRoot.create("claude", tmp_path / name, namespace=name) for name in ("a", "b")]
+    for root in roots:
+        make(root.path)
+    cfg = Config(tmp_path / "manager", tmp_path / "config", roots, "replace")
+    cfg.prepare()
+    with Catalog(cfg.data_dir) as catalog:
+        refresh(cfg, catalog)
+        previous = next(r for r in catalog.root_states() if r["root_id"] == roots[1].root_id)
+        cfg.config_path.write_text(
+            tomli_w.dumps(
+                {
+                    "discovery_roots_mode": "replace",
+                    "sources": [
+                        {
+                            "provider": "claude",
+                            "path": str(root.path),
+                            "namespace": name,
+                            "enabled": name == "a",
+                        }
+                        for root, name in zip(roots, ("a", "b"), strict=True)
+                    ],
+                }
+            )
+        )
+        updated = Config.load(cfg.config_path, cfg.data_dir)
+        receipts = refresh(updated, catalog)
+        assert len(receipts) == 1 and receipts[0]["root_id"] == roots[0].root_id
+        assert (
+            next(r for r in catalog.root_states() if r["root_id"] == roots[1].root_id) == previous
+        )
+        assert len(catalog.sessions()) == 2
+
+
 def test_replace_roots_never_adds_defaults(isolated):
     config, data = isolated
     assert Config.load(config, data).roots == []

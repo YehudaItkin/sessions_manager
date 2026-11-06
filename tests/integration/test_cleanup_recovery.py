@@ -182,6 +182,140 @@ def run_action(service, action, target):
     return service.commit(action, [target], plan["confirmation_token"], assert_closed=True)
 
 
+@pytest.mark.parametrize(
+    "stage",
+    ["lifecycle_started", "entry_intent", "entry_directory", "entry_manifest", "item_terminal"],
+)
+def test_every_durable_cleanup_stage_is_listed_and_retryable_after_restart(tmp_path, stage):
+    from sessions_manager.catalog import Catalog
+    from sessions_manager.cleanup import CleanupService
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        original, near = tree_bytes(path), tree_bytes(neighbor)
+        plan = service.preview("trash", [uid])
+
+        def fault(current, target):
+            if current == stage:
+                raise Crash()
+
+        service.fault = fault
+        with pytest.raises(Crash):
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        with Catalog(service.config.data_dir) as restarted:
+            recovery = CleanupService(service.config, restarted)
+            listing = recovery.trash_list()
+            assert len(listing) == 1
+            item = listing[0]
+            assert "retry_same_confirmation" in item["available_actions"]
+            if stage != "item_terminal":
+                assert item["trash_id"] is None and item["kind"] == "operation"
+                assert not item["recoverable_copy"]
+                assert tree_bytes(path) == original
+            result = recovery.retry(item["operation_id"], assert_closed=True)
+            assert result["items"][0]["state"] == "trashed"
+            assert (
+                restarted.connection.execute("SELECT COUNT(*) FROM trash_entries").fetchone()[0]
+                == 1
+            )
+            assert (
+                restarted.connection.execute(
+                    "SELECT lifecycle_pending FROM sessions WHERE uid=?",
+                    (restarted.get(uid).session_uid,),
+                ).fetchone()[0]
+                is None
+            )
+            trash = result["items"][0]["trash_id"]
+            run_action(recovery, "restore", trash)
+            assert tree_bytes(path) == original and tree_bytes(neighbor) == near
+
+
+def test_cli_exposes_and_retries_operation_before_trash_entry(tmp_path, monkeypatch):
+    import json
+
+    import tomli_w
+    from typer.testing import CliRunner
+
+    from sessions_manager.cli import app
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        plan = service.preview("trash", [uid])
+        original = service._assert_current_bundle
+
+        def crash(*args):
+            raise Crash()
+
+        monkeypatch.setattr(service, "_assert_current_bundle", crash)
+        with pytest.raises(Crash):
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        monkeypatch.setattr(service, "_assert_current_bundle", original)
+        service.config.config_path.write_text(
+            tomli_w.dumps(
+                {
+                    "discovery_roots_mode": "replace",
+                    "sources": [
+                        {
+                            "provider": "claude",
+                            "path": str(root.path),
+                            "executable_version": "synthetic",
+                        }
+                    ],
+                }
+            )
+        )
+        base = [
+            "--config",
+            str(service.config.config_path),
+            "--data-dir",
+            str(service.config.data_dir),
+            "--format",
+            "json",
+        ]
+        runner = CliRunner()
+        response = runner.invoke(app, [*base, "trash", "list"])
+        assert response.exit_code == 0, response.output
+        items = json.loads(response.stdout)["data"]["items"]
+        assert len(items) == 1 and items[0]["trash_id"] is None
+        response = runner.invoke(
+            app, [*base, "trash", "retry", items[0]["operation_id"], "--assert-closed"]
+        )
+        assert response.exit_code == 0, response.output
+        assert json.loads(response.stdout)["data"]["items"][0]["state"] == "trashed"
+        assert not path.exists() and neighbor.exists()
+
+
+def test_staged_entry_id_cannot_escape_manager_trash_on_retry(tmp_path):
+    import json
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        plan = service.preview("trash", [uid])
+
+        def fault(stage, target):
+            if stage == "entry_intent":
+                raise Crash()
+
+        service.fault = fault
+        with pytest.raises(Crash):
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        op = service.trash_list()[0]["operation_id"]
+        outside = tmp_path / "outside-staging"
+        with service.catalog.writer() as db:
+            progress = json.loads(
+                db.execute(
+                    "SELECT payload FROM operation_items WHERE operation_id=?", (op,)
+                ).fetchone()[0]
+            )
+            progress["trash_id"] = str(outside)
+            db.execute(
+                "UPDATE operation_items SET payload=? WHERE operation_id=?",
+                (json.dumps(progress), op),
+            )
+        service.fault = None
+        result = service.retry(op, assert_closed=True)
+        assert result["items"][0]["state"] == "failed_no_change"
+        assert result["items"][0]["error"] == "invalid_trash_id"
+        assert not outside.exists() and path.exists() and neighbor.exists()
+
+
 @pytest.mark.parametrize("stage", ["metadata", "complete"])
 @pytest.mark.parametrize("outcome", ["trashed", "purged", "restored"])
 @pytest.mark.parametrize("other_process", [False, True])

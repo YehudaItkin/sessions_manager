@@ -78,7 +78,10 @@ class CleanupService:
         else:
             import re
 
-            if any(not re.fullmatch(r"t-[a-f0-9-]{36}", value) for value in ids):
+            if any(
+                not isinstance(value, str) or not re.fullmatch(r"t-[a-f0-9-]{36}", value)
+                for value in ids
+            ):
                 raise Failure("invalid_trash_id", 2)
             normalized = list(ids)
         if len(set(normalized)) != len(normalized):
@@ -86,6 +89,15 @@ class CleanupService:
         return normalized
 
     def _snapshot(self, session):
+        if (
+            self.catalog.connection.execute(
+                "SELECT COUNT(*) FROM locations WHERE uid=?", (session.session_uid,)
+            ).fetchone()[0]
+            > 1
+        ):
+            raise Failure(
+                session.extra.get("identity_conflict") or "multiple_locations_unverified", 4
+            )
         if len(session.extra.get("identity_signatures", {})) > 1:
             raise Failure(
                 session.extra.get("identity_conflict") or "multiple_locations_unverified", 4
@@ -95,12 +107,14 @@ class CleanupService:
         if session.presence != "present":
             raise Failure("source_not_present", 5)
         root = self._root(session.root_id)
-        fresh = next(
-            (s for s in adapter(root).discover().sessions if s.session_uid == session.session_uid),
-            None,
-        )
-        if fresh is None:
+        copies = [
+            s for s in adapter(root).discover().sessions if s.session_uid == session.session_uid
+        ]
+        if len(copies) > 1:
+            raise Failure("multiple_locations_unverified", 4)
+        if not copies or copies[0].locator != session.locator:
             raise Failure("source_changed", 5)
+        fresh = copies[0]
         from .activity import observe
 
         observe(root, [fresh])
@@ -335,11 +349,27 @@ class CleanupService:
 
     def _begin_entry(self, op, target, item):
         if item["trash_id"]:
+            self._ids("restore", [item["trash_id"]])
+        if (
+            item["trash_id"]
+            and self.catalog.connection.execute(
+                "SELECT 1 FROM trash_entries WHERE trash_id=?", (item["trash_id"],)
+            ).fetchone()
+        ):
             return self._entry(item["trash_id"])
-        trash_id = "t-" + str(uuid.uuid4())
+        if not item["trash_id"]:
+            item["trash_id"] = "t-" + str(uuid.uuid4())
+            self._save_item(op, item)
+            self._checkpoint("entry_intent", item["target_id"])
+        trash_id = item["trash_id"]
         directory = ensure_private(self.config.data_dir / "trash" / trash_id)
         ensure_private(directory / "backup")
         ensure_private(directory / "payload")
+        if any(p.name not in {"manifest.json", "backup", "payload"} for p in directory.iterdir()):
+            raise Failure("unknown_trash_artifact", 5)
+        if any(any((directory / name).iterdir()) for name in ("backup", "payload")):
+            raise Failure("unknown_trash_artifact", 5)
+        self._checkpoint("entry_directory", item["target_id"])
         entry = TrashEntry(
             trash_id,
             target["session_uid"],
@@ -350,8 +380,15 @@ class CleanupService:
             target["artifacts"],
         )
         raw = json.dumps(public(entry), ensure_ascii=False, sort_keys=True).encode()
-        private_file(directory / "manifest.json", raw)
+        manifest = directory / "manifest.json"
+        if manifest.exists() or manifest.is_symlink():
+            fsops.secure_path(manifest, directory)
+            if manifest.read_bytes() != raw:
+                raise Failure("trash_manifest_changed", 5)
+        else:
+            private_file(manifest, raw)
         fsops.fsync_dir(directory)
+        self._checkpoint("entry_manifest", item["target_id"])
         item["trash_id"] = trash_id
         with self.catalog.writer() as db:
             db.execute(
@@ -382,6 +419,7 @@ class CleanupService:
         # retries must reconcile its verified journal/payload rather than rediscover it.
         moved_before = False
         if item["trash_id"]:
+            self._ids("restore", [item["trash_id"]])
             payload = self.config.data_dir / "trash" / item["trash_id"] / "payload"
             moved_before = payload.exists() and any(payload.iterdir())
         if not moved_before:
@@ -654,6 +692,7 @@ class CleanupService:
                     result.append(item)
                     continue
                 self.catalog.begin_lifecycle(target["session_uid"], op)
+                self._checkpoint("lifecycle_started", item["target_id"])
                 try:
                     if action == "trash":
                         self._trash(op, target, item)
@@ -694,6 +733,7 @@ class CleanupService:
                             self._entry_state(item["trash_id"], item["state"])
                 self._save_item(op, item)
                 if item["state"] in ("trashed", "restored", "purged", "failed_no_change"):
+                    self._checkpoint("item_terminal", item["target_id"])
                     self.catalog.finish_lifecycle(target["session_uid"], op)
                 result.append(item)
             terminal = all(
@@ -710,6 +750,7 @@ class CleanupService:
 
     def trash_list(self):
         items = []
+        represented = set()
         for row in self.catalog.connection.execute(
             "SELECT trash_id,session_uid,state,operation_id FROM trash_entries ORDER BY rowid"
         ):
@@ -719,6 +760,12 @@ class CleanupService:
                 (row["trash_id"], row["trash_id"]),
             ).fetchone()
             operation_id = current[0] if current else row["operation_id"]
+            progress = json.loads(current[1]) if current else {}
+            if current:
+                represented.add((operation_id, progress["target_id"]))
+            owner = self.catalog.connection.execute(
+                "SELECT lifecycle_pending FROM sessions WHERE uid=?", (row["session_uid"],)
+            ).fetchone()
             if state not in ("trashed", "restored", "purged", "failed_no_change"):
                 state = "recovery_required"
             actions = (
@@ -731,9 +778,10 @@ class CleanupService:
                 else ["retry_same_confirmation", "inspect_trash"]
             )
             if state == "purged" and current:
-                progress = json.loads(current[1])
                 if progress.get("cleanup_pending") or progress["state"] != "purged":
                     actions = ["retry_same_confirmation", "inspect_trash"]
+            if owner and owner[0] == operation_id:
+                actions = ["retry_same_confirmation", "inspect_trash"]
             items.append(
                 {
                     "trash_id": row["trash_id"],
@@ -741,9 +789,65 @@ class CleanupService:
                     "state": state,
                     "operation_id": operation_id,
                     "available_actions": actions,
+                    "stage": progress.get("state", state),
+                    "kind": "trash",
+                    "item_id": row["trash_id"],
+                    "recoverable_copy": state in ("trashed", "restored"),
+                }
+            )
+        for row in self.catalog.connection.execute(
+            "SELECT i.operation_id,i.target_id,i.payload,p.payload AS plan FROM operation_items i JOIN operation_plans p USING(operation_id) JOIN operations o USING(operation_id) WHERE o.state IN ('running','partial') ORDER BY o.created_at,i.target_id"
+        ):
+            if (row["operation_id"], row["target_id"]) in represented:
+                continue
+            progress = json.loads(row["payload"])
+            target = next(t for t in json.loads(row["plan"]) if t["target_id"] == row["target_id"])
+            owner = self.catalog.connection.execute(
+                "SELECT lifecycle_pending FROM sessions WHERE uid=?", (target["session_uid"],)
+            ).fetchone()
+            if progress["state"] in ("trashed", "restored", "purged", "failed_no_change") and (
+                not owner or owner[0] != row["operation_id"]
+            ):
+                continue
+            items.append(
+                {
+                    "kind": "operation",
+                    "item_id": "operation:" + row["operation_id"] + ":" + row["target_id"],
+                    "trash_id": None,
+                    "session_id": target["session_uid"],
+                    "target_id": row["target_id"],
+                    "operation_id": row["operation_id"],
+                    "state": "recovery_required",
+                    "stage": progress["state"],
+                    "recoverable_copy": False,
+                    "available_actions": ["retry_same_confirmation", "inspect_trash"],
                 }
             )
         return items
+
+    def recovery_preview(self, operation_id):
+        row = self.catalog.connection.execute(
+            "SELECT action,payload FROM operation_plans WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            raise Failure("operation_not_found", 2)
+        targets = json.loads(row["payload"])
+        return {
+            "action": "cleanup-retry",
+            "operation_id": operation_id,
+            "targets": [
+                {
+                    "target_id": t["target_id"],
+                    "session_uid": t["session_uid"],
+                    "provider": t["provider"],
+                    "artifacts": [a["source"] for a in t["artifacts"]],
+                }
+                for t in targets
+            ],
+            "effect": "Retry the same confirmed cleanup operation and targets; no new sessions are added.",
+            "requires_assert_closed": row["action"] == "trash"
+            and any(t["activity"] == "unknown" for t in targets),
+        }
 
     def retry(self, operation_id, *, assert_closed=False):
         row = self.catalog.connection.execute(
