@@ -26,7 +26,7 @@ CLI help/version не сканируют пользовательскую ист
 | sessions hide ID... | Persistent manager-only скрытие |
 | sessions unhide ID... | Возврат из скрытых без изменения native source |
 | sessions delete ID... | Только preview удаления, если нет valid --confirm |
-| sessions trash list | Восстанавливаемые и recovery_required записи |
+| sessions trash list | Записи корзины и незавершённые операции, включая стадию до создания копии |
 | sessions trash restore TRASH_ID... | Preview восстановления, затем подтверждённая операция |
 | sessions trash purge TRASH_ID... | Отдельный preview необратимой очистки |
 | sessions trash retry OPERATION_ID | Продолжение точного сохранённого набора после прерывания |
@@ -127,7 +127,7 @@ Purge требует отдельного предупреждения о нео
 project, last activity, current activity,
 capabilities; отдельно progress, stale/partial source status, hidden/trash counts.
 Поиск и фильтры доступны без выхода. Enter — детали; / — поиск; o — open/resume;
-F5 — refresh; r внутри корзины — restore; f — filters/sort; Esc — reset; v — scope; Space — batch selection;
+F5 — refresh; r внутри корзины — restore, x — retry; f — filters/sort; Esc — reset; v — scope; Space — batch selection;
 h — hide/unhide; d — Move to trash (preview delete); s — statistics (source/project/day); t — trash; q — выход.
 Выбор привязан к ID, не позиции строки при пересортировке. Видимая кнопка Filters / sort
 и сводка показывают текущую выборку; диалог содержит подписанные поля, multi-source
@@ -161,9 +161,19 @@ Version 1 envelope содержит:
 | stats | scope, metrics, groups, coverage, accounting_mode |
 | operation_plan | plan_id, action, targets, known_bytes, bytes_complete, confirmation_token, expires_at |
 | operation_result | operation_id, items (target_id, state, trash_id, error, recovery_options) |
-| trash_list | items (trash_id, session_id, state, available_actions) |
+| trash_list | items (kind, item_id, trash_id nullable, session_id, operation_id, state, stage, recoverable_copy, available_actions) |
 | refresh | items (выбранные sessions), scans (receipts всех обновлённых roots), complete, state |
 | sources / doctor | items; source-specific details без секретов |
+
+`trash_list` kind=operation обозначает незавершённую journaled operation без готовой
+TrashEntry: trash_id=null, target_id — исходная цель, recoverable_copy=false. Для неё
+доступен retry_same_confirmation по operation_id, без restore/purge. kind=trash сохраняет
+прежний Trash ID. Клиенты определяют действия по available_actions; terminal receipt с
+незавершённым lifecycle reconciliation также может предлагать retry.
+
+Config sources принимает только массив объектов; enabled — точный boolean.
+Модель SourceRoot также проверяет boolean default_root при deserialization.
+Неверная форма config возвращает safe invalid_config/exit 2 до каталога, scan и runtime state.
 
 Пример метрики: `{"value": null, "reason": "not_recorded", "known_sessions": 0,
 "selected_sessions": 4, "complete": false}`.

@@ -112,3 +112,10 @@ def test_surrogate_follows_same_filesystem_artifact_after_move(tmp_path):
     )
     assert before.session_uid == after.session_uid
     assert after.capabilities["resume"].state == "unavailable"
+
+
+@pytest.mark.parametrize("field", ["enabled", "default_root"])
+@pytest.mark.parametrize("value", ["false", 0, None])
+def test_root_control_flags_require_exact_booleans(tmp_path, field, value):
+    with pytest.raises(ValueError):
+        SourceRoot.create("claude", tmp_path, **{field: value})

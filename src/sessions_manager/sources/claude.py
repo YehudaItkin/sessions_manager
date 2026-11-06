@@ -21,7 +21,10 @@ class Adapter:
         if not available_root(self.root.path, result):
             return result
         for session in read_many(
-            self._discover_one, discover_paths(self.root.path / "projects", "*/*.jsonl", result)
+            self._discover_one,
+            discover_paths(
+                self.root.path / "projects", "*/*.jsonl", result, boundary=self.root.path
+            ),
         ):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"

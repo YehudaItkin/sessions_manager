@@ -3,9 +3,10 @@
 import importlib
 import multiprocessing
 import sqlite3
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 
-from .models import Capability, Failure, now_ms
+from .models import Capability, Failure, location_key, now_ms
 from .sources.base import ScanResult
 
 READ_ERRORS = (OSError, Failure, ValueError, TypeError, KeyError, AttributeError, sqlite3.Error)
@@ -26,8 +27,13 @@ def scan_metadata(argument):
         reader.metadata_only = True
         result = reader.discover()
         result.lifecycle_revisions = revisions
+        counts = Counter(s.session_uid for s in result.sessions)
         for session in result.sessions:
             session._identity_root_ids = getattr(root, "_identity_root_ids", [root.root_id])
+            old = cached.get(session.session_uid)
+            session._compare_identity = counts[session.session_uid] > 1 or bool(
+                old and old.extra.get("identity_signatures")
+            )
             session.history_state = session.search_state = session.usage_state = "partial"
             for name in ("history", "search", "usage", "resume", "cleanup", "archive", "unarchive"):
                 session.capabilities[name] = Capability("unavailable", "scan_pending")
@@ -65,11 +71,24 @@ def scan_root(argument):
         from .sources.base import prepare_cleanup_bundle
 
         cleanup_checks = {}
+        counts = Counter(s.session_uid for s in result.sessions)
         for session in result.sessions:
             old = cached.get(session.session_uid)
             session._identity_root_ids = getattr(root, "_identity_root_ids", [root.root_id])
-            compare_identity = len(session._identity_root_ids) > 1
-            unchanged = old is not None and old.fingerprint == session.fingerprint
+            compare_identity = (
+                len(session._identity_root_ids) > 1
+                or counts[session.session_uid] > 1
+                or bool(old and old.extra.get("identity_signatures"))
+            )
+            session._compare_identity = compare_identity
+            session._scan_data_key = (
+                location_key(session) if counts[session.session_uid] > 1 else session.session_uid
+            )
+            unchanged = (
+                old is not None
+                and old.locator == session.locator
+                and old.fingerprint == session.fingerprint
+            )
             if (
                 unchanged
                 and old.presence == "present"
@@ -98,7 +117,7 @@ def scan_root(argument):
                         "supported" if history.state in ("complete", "partial") else "unavailable",
                         history.reason,
                     )
-                    result.histories[session.session_uid] = history
+                    result.histories[session._scan_data_key] = history
                     native_verified = (
                         history.state == "complete"
                         and bool(history.events)
@@ -160,7 +179,7 @@ def scan_root(argument):
                         "supported" if usage.state in ("complete", "partial") else "unavailable",
                         usage.reason,
                     )
-                    result.usages[session.session_uid] = usage
+                    result.usages[session._scan_data_key] = usage
             session.extra["usage_version"] = "4"
             try:
                 prepare_cleanup_bundle(root, session, common_checks=cleanup_checks)
@@ -195,7 +214,7 @@ def scan_for_transport(root):
     from .search import prepare_chunk
 
     result.text_buffers = {}
-    by_uid = {session.session_uid: session for session in result.sessions}
+    by_uid = {session._scan_data_key: session for session in result.sessions}
     for uid, history in getattr(result, "histories", {}).items():
         session = by_uid[uid]
         session._prepared_chunks = []

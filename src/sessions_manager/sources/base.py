@@ -4,6 +4,7 @@ import json
 import os
 import re
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,18 +23,36 @@ def available_root(path, result):
     return False
 
 
-def discover_paths(base, pattern, result):
+@contextmanager
+def source_directory(directory, boundary):
+    """Bind an explicitly configured read root; never follow links below it."""
+    relative = Path(directory).absolute().relative_to(Path(boundary).absolute())
+    if ".." in relative.parts:
+        raise OSError("source path outside root")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(Path(boundary).resolve(), flags)
+    try:
+        for part in relative.parts:
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def discover_paths(base, pattern, result, *, boundary=None):
     """Enumerate known shapes without pathlib.glob silently swallowing I/O errors."""
     import fnmatch
 
     parts = pattern.split("/")
 
-    def walk(directory, index, depth=0):
+    def walk(fd, directory, index, depth=0):
         if depth > 64:
             result.complete, result.reason = False, "source_enumeration_failed"
             return
         try:
-            with os.scandir(directory) as entries:
+            with os.scandir(fd) as entries:
                 children = sorted(entries, key=lambda entry: entry.name)
         except FileNotFoundError:
             if depth != 0:
@@ -44,21 +63,47 @@ def discover_paths(base, pattern, result):
             return
         part = parts[index]
         if part == "**":
-            yield from walk(directory, index + 1, depth)
+            yield from walk(fd, directory, index + 1, depth)
         for entry in children:
             try:
-                if part == "**":
-                    if entry.is_dir(follow_symlinks=False):
-                        yield from walk(Path(entry.path), index, depth + 1)
-                elif fnmatch.fnmatchcase(entry.name, part):
+                if part != "**" and not fnmatch.fnmatchcase(entry.name, part):
+                    continue
+                if entry.is_symlink():
+                    result.complete, result.reason = False, "source_enumeration_failed"
+                    continue
+                if part != "**":
                     if index == len(parts) - 1:
-                        yield Path(entry.path)
-                    elif entry.is_dir():
-                        yield from walk(Path(entry.path), index + 1, depth + 1)
+                        yield directory / entry.name
+                        continue
+                if entry.is_dir(follow_symlinks=False):
+                    stamp = entry.stat(follow_symlinks=False)
+                    child = os.open(
+                        entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                    )
+                    try:
+                        actual = os.fstat(child)
+                        if (stamp.st_dev, stamp.st_ino) != (actual.st_dev, actual.st_ino):
+                            raise OSError("source directory changed")
+                        yield from walk(
+                            child,
+                            directory / entry.name,
+                            index if part == "**" else index + 1,
+                            depth + 1,
+                        )
+                    finally:
+                        os.close(child)
             except OSError:
                 result.complete, result.reason = False, "source_enumeration_failed"
 
-    return sorted(walk(Path(base), 0))
+    try:
+        with source_directory(base, boundary or base) as fd:
+            return sorted(walk(fd, Path(base), 0))
+    except FileNotFoundError:
+        if not Path(boundary or base).is_dir():
+            result.complete, result.reason = False, "source_enumeration_failed"
+    except OSError:
+        result.complete, result.reason = False, "source_enumeration_failed"
+    return []
 
 
 @dataclass

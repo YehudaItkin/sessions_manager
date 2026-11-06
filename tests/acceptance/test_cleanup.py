@@ -76,3 +76,37 @@ async def test_destructive_modal_defaults_to_cancel():
         await pilot.press("enter")
         await pilot.pause()
         assert not isinstance(app.screen, CleanupScreen)
+
+
+async def test_tui_retry_exposes_operation_without_trash_copy(tmp_path, monkeypatch):
+    import pytest
+    from textual.widgets import DataTable, Static
+
+    from sessions_manager.ui.app import SessionsApp
+    from tests.integration.test_cleanup_recovery import Crash
+    from tests.support.cleanup_case import case
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        plan = service.preview("trash", [uid])
+        actual = service._assert_current_bundle
+
+        def crash(*args):
+            raise Crash()
+
+        monkeypatch.setattr(service, "_assert_current_bundle", crash)
+        with pytest.raises(Crash):
+            service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        monkeypatch.setattr(service, "_assert_current_bundle", actual)
+        app = SessionsApp(service.config, service.catalog)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.press("t")
+            await pilot.pause()
+            table = app.screen.query_one("#trash-table", DataTable)
+            assert table.row_count == 1
+            await pilot.click("#retry")
+            await pilot.pause()
+            assert "same" in " ".join(str(w.render()).lower() for w in app.screen.query(Static))
+            await pilot.click("#closed")
+            await pilot.click("#confirm")
+            await pilot.pause()
+            assert not path.exists() and neighbor.exists()

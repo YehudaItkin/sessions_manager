@@ -329,9 +329,13 @@ class SessionsApp(App):
         from ..models import Failure
         from .screens import CleanupScreen
 
-        service = CleanupService(self.config, self.catalog)
         try:
-            plan = service.preview(action, ids)
+            service = CleanupService(self.config, self.catalog)
+            plan = (
+                service.recovery_preview(ids[0])
+                if action == "cleanup-retry"
+                else service.preview(action, ids)
+            )
         except Failure as failure:
             self.push_screen(TextScreen(explain(failure.code)))
             return
@@ -340,8 +344,12 @@ class SessionsApp(App):
             import json
 
             try:
-                result = service.commit(
-                    action, ids, plan["confirmation_token"], assert_closed=closed
+                result = (
+                    service.retry(ids[0], assert_closed=closed)
+                    if action == "cleanup-retry"
+                    else service.commit(
+                        action, ids, plan["confirmation_token"], assert_closed=closed
+                    )
                 )
                 self.batch_selection.clear()
                 self.reload_rows()

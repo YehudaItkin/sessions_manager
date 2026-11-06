@@ -29,9 +29,11 @@ def test_denied_child_enumeration_preserves_cached_sessions(isolated, tmp_path, 
     cfg = Config(data, config, [root], "replace")
     cfg.prepare()
     original = os.scandir
+    target = (root.path / "projects").stat()
 
     def denied(path):
-        if not isinstance(path, int) and Path(path) == root.path / "projects":
+        info = os.fstat(path) if isinstance(path, int) else Path(path).stat()
+        if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
             raise PermissionError("synthetic denied listing")
         return original(path)
 

@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from sessions_manager.cli import app
@@ -60,3 +61,26 @@ def test_json_usage_error_and_internal_failure_are_safe(isolated, monkeypatch):
     assert result.exit_code == 1
     assert json.loads(result.stdout)["error"]["code"] == "internal_error"
     assert "confidential" not in result.output
+
+
+@pytest.mark.parametrize("source_value", [1, {}, "bad"])
+def test_invalid_source_shape_returns_safe_config_error_without_state(isolated, source_value):
+    import json
+
+    import tomli_w
+    from typer.testing import CliRunner
+
+    from sessions_manager.cli import app
+
+    config, data = isolated
+    config.write_text(
+        tomli_w.dumps({"discovery_roots_mode": "replace", "sources": source_value})
+        + "\n# SYNTHETIC-PRIVATE-CONFIG\n"
+    )
+    result = CliRunner().invoke(
+        app, ["--config", str(config), "--data-dir", str(data), "--format", "json", "list"]
+    )
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["error"]["code"] == "invalid_config"
+    assert "SYNTHETIC-PRIVATE-CONFIG" not in result.output
+    assert not data.exists()

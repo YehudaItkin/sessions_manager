@@ -109,7 +109,9 @@ class Adapter:
                 except RECORD_ERRORS:
                     result.complete, result.reason = False, "invalid_native_record"
         else:
-            for locator in discover_paths(root.path / "sessions", "**/*.jsonl", result):
+            for locator in discover_paths(
+                root.path / "sessions", "**/*.jsonl", result, boundary=root.path
+            ):
                 try:
                     _, row = next(json_lines(locator, cache=getattr(self, "jsonl_cache", None)))
                     meta = row.get("payload", {})

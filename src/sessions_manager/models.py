@@ -153,6 +153,10 @@ def identity(*parts) -> str:
     return str(uuid.uuid5(NAMESPACE, "\0".join(map(str, parts))))
 
 
+def location_key(session):
+    return identity("location", session.root_id, session.locator)
+
+
 def safe_text(value: Any) -> str:
     text = str(value if value is not None else "unknown")
     text = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
@@ -225,6 +229,8 @@ class SourceRoot:
     last_scan_id: str | None = None
 
     def __post_init__(self):
+        if type(self.enabled) is not bool or type(self.default_root) is not bool:
+            raise ValueError("invalid source control flag")
         for value in (self.root_id, self.namespace_id):
             _identifier(value)
         if self.provider not in PROVIDERS:

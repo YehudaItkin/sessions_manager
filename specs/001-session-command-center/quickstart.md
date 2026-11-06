@@ -286,3 +286,26 @@ retain the existing manager catalog and use a separately preserved compatible ca
 never overwrite native shared stores. Unconsumed legacy archive previews require a fresh
 preview; interrupted operations retain same-scope retry. Native Warp remains blocked by
 the recorded access denial; no automatic retry or alternate UI/shell gate is authorized.
+
+
+## Phase 13 synthetic recovery and boundary smoke
+
+Use disposable fixture roots only. Put the same Claude native ID under two projects in
+one root, then refresh: identical history/cwd/graph yields one manager row; differing
+copies report identity_conflict without arbitrary details/search/usage. Reverse file
+enumeration and refresh warm, then remove one copy and refresh: UID/hidden state remain.
+Resume revalidates all copies; cleanup requires exactly one proven location and refuses
+a duplicate introduced after preview before any source move.
+
+Inject interruption after lifecycle ownership, staging intent/directory/manifest, and
+after terminal item before owner release. Reopen the catalog. `sessions trash list` must
+show the original operation ID even before a TrashEntry exists, with no claim of a ready
+recoverable copy. Retry with `sessions trash retry OPERATION_ID --assert-closed`, or t →
+Retry (x) → original targets/closed assertion → Confirm in TUI. Verify one entry, released
+ownership, restored source bytes and unchanged neighbors; no new target selection.
+
+For narrow Grok/Cursor roots, exercise workspace/session/dangling links and directory
+substitution against an outside sentinel. No outside subtree is listed or counted;
+coverage is partial/unknown. Explicit configured root aliases remain supported.
+Config `sources=1`, `[sources]` or `enabled="false"` returns invalid_config/exit 2 before
+runtime state. Valid `enabled=false` skips refresh without changing prior generation/as_of.

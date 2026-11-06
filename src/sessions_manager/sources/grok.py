@@ -27,7 +27,8 @@ class Adapter:
             else self.root.path
         )
         for session in read_many(
-            self._discover_one, discover_paths(home, "*/*/summary.json", result)
+            self._discover_one,
+            discover_paths(home, "*/*/summary.json", result, boundary=self.root.path),
         ):
             if session is None:
                 result.complete, result.reason = False, "invalid_native_record"
