@@ -198,11 +198,13 @@ class DetailsScreen(ModalScreen):
         self.render_page()
 
     def render_page(self):
-        from ..models import display_time
+        from ..models import display_session_time
 
         session = self.catalog.get(self.uid)
         rows = self.catalog.events(self.uid, self.history_offset, 101)
-        header = f"Manager ID: {session.display_id}\nNative ID: {session.native_id or 'unknown'}\nSource: {session.provider}\nProject: {session.cwd or 'unknown'}\nCreated: {display_time(session.created_at)}\nLast activity: {display_time(session.last_activity_at)}\nHistory: {session.history_state}\n"
+        header = f"Manager ID: {session.display_id}\nNative ID: {session.native_id or 'unknown'}\nSource: {session.provider}\nProject: {session.cwd or 'unknown'}\nCreated: {display_session_time(session, 'created_at')}\nLast activity: {display_session_time(session, 'last_activity_at')}\nHistory: {session.history_state}\n"
+        if session.extra.get("ambiguous_native_dates"):
+            header += "Some native dates are ambiguous (timezone not recorded).\n"
         header += "\n".join(
             f"{key}: {value.state}" + (f" — {explain(value.reason)}" if value.reason else "")
             for key, value in session.capabilities.items()

@@ -18,12 +18,14 @@ def adapter(root):
 def scan_metadata(argument):
     root, cached = argument
     started = now_ms()
+    revisions = dict(getattr(root, "_lifecycle_revisions", {}))
     try:
         if cached and not root.path.exists():
             return ScanResult(complete=False, reason="source_unavailable")
         reader = adapter(root)
         reader.metadata_only = True
         result = reader.discover()
+        result.lifecycle_revisions = revisions
         for session in result.sessions:
             session._identity_root_ids = getattr(root, "_identity_root_ids", [root.root_id])
             session.history_state = session.search_state = session.usage_state = "partial"
@@ -44,6 +46,7 @@ def scan_metadata(argument):
 def scan_root(argument):
     root, cached = argument
     started = now_ms()
+    revisions = dict(getattr(root, "_lifecycle_revisions", {}))
     try:
         if cached and not root.path.exists():
             return ScanResult(complete=False, reason="source_unavailable")
@@ -52,6 +55,7 @@ def scan_root(argument):
 
         reader.jsonl_cache = JSONLCursor(getattr(root, "_jsonl_cursors", {}))
         result = reader.discover()
+        result.lifecycle_revisions = revisions
         from .activity import observe
 
         observe(root, result.sessions)
@@ -166,6 +170,9 @@ def scan_root(argument):
                     "unavailable",
                     failure.code if isinstance(failure, Failure) else "cleanup_read_failed",
                 )
+        from .storage import measure
+
+        result.storage = measure(root)
         result.started_at, result.finished_at = started, now_ms()
         result.source_revision_range = [
             {
@@ -217,6 +224,11 @@ def prepare_scan(config, catalog, providers=None):
     cycle = str(uuid.uuid4())
     for root in roots:
         root._scan_cycle = cycle
+        root._lifecycle_revisions = dict(
+            catalog.connection.execute(
+                "SELECT uid,lifecycle_revision FROM sessions WHERE lifecycle_revision>0"
+            )
+        )
         root._jsonl_cursors = dict(
             catalog.connection.execute(
                 "SELECT path,payload FROM jsonl_cursors WHERE root_id=?", (root.root_id,)

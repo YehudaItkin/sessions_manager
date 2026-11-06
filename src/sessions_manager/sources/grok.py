@@ -1,4 +1,4 @@
-from ..models import Capability, Failure, Session, timestamp
+from ..models import Capability, Failure, Session, annotate_dates, timestamp
 from .base import (
     ScanResult,
     available_root,
@@ -64,6 +64,9 @@ class Adapter:
                 known_bytes=known_bytes,
             )
             session.capabilities["metadata"] = Capability("supported")
+            annotate_dates(
+                session, [get("created_at")], [get("last_active_at") or get("updated_at")]
+            )
             session.capabilities["resume"] = resume_capability(self.root)
             return session
         except (Failure, OSError):

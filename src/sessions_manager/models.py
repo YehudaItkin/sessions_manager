@@ -83,6 +83,72 @@ def timestamp(value, *, milliseconds=False):
         return None
 
 
+def annotate_dates(session, created_values, last_values):
+    """Retain timezone uncertainty without inventing UTC instants for naive dates."""
+
+    def confidence(value):
+        if value is None:
+            return "unknown"
+        if isinstance(value, str):
+            try:
+                if dt.datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is None:
+                    return "ambiguous"
+            except ValueError:
+                pass
+        return "known" if timestamp(value) is not None else "unknown"
+
+    provenance, ambiguous = {}, False
+    for name, values in (("created_at", created_values), ("last_activity_at", last_values)):
+        values = list(values)
+        uncertain = any(confidence(value) == "ambiguous" for value in values)
+        ambiguous |= uncertain
+        state = (
+            "known"
+            if getattr(session, name) is not None
+            else "ambiguous"
+            if uncertain
+            else "unknown"
+        )
+        reason = (
+            None
+            if state == "known"
+            else "timezone_not_recorded"
+            if uncertain
+            else "not_recorded"
+            if all(value is None for value in values)
+            else "invalid_timestamp"
+        )
+        provenance[name] = {"confidence": state, "reason": reason}
+    session.extra["date_provenance"] = provenance
+    session.extra["ambiguous_native_dates"] = ambiguous
+    session.timezone_confidence = (
+        "ambiguous"
+        if ambiguous
+        else "known"
+        if any(v["confidence"] == "known" for v in provenance.values())
+        else "unknown"
+    )
+
+
+def date_confidence(session, field):
+    return (
+        session.extra.get("date_provenance", {})
+        .get(field, {})
+        .get(
+            "confidence",
+            session.timezone_confidence if getattr(session, field) is not None else "unknown",
+        )
+    )
+
+
+def display_session_time(session, field):
+    return (
+        "ambiguous (timezone not recorded)"
+        if date_confidence(session, field) == "ambiguous"
+        else display_time(getattr(session, field))
+    )
+
+
 def identity(*parts) -> str:
     return str(uuid.uuid5(NAMESPACE, "\0".join(map(str, parts))))
 

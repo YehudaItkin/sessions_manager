@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ..models import Capability, Failure, Session, timestamp
+from ..models import Capability, Failure, Session, annotate_dates, timestamp
 from .base import (
     RECORD_ERRORS,
     ScanResult,
@@ -94,6 +94,16 @@ class Adapter:
                             "archive_state_known": "archived" in row,
                         },
                     )
+                    annotate_dates(
+                        session,
+                        [row.get("created_at_ms") or row.get("created_at")],
+                        [
+                            row.get("recency_at_ms")
+                            or row.get("updated_at_ms")
+                            or row.get("recency_at")
+                            or row.get("updated_at")
+                        ],
+                    )
                     self._capabilities(session, locator.is_file())
                     result.sessions.append(session)
                 except RECORD_ERRORS:
@@ -114,6 +124,7 @@ class Adapter:
                         profile="codex-jsonl",
                         fingerprint={"rollout": fingerprint(locator)},
                     )
+                    annotate_dates(session, [meta.get("timestamp")], [])
                     self._capabilities(session, True)
                     result.sessions.append(session)
                 except (*RECORD_ERRORS, StopIteration):

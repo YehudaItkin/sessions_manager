@@ -80,7 +80,7 @@ def trusted_directory(path, *, create=False, private=False, owned=True):
     raise Failure("unsafe_directory_path", 5)
 
 
-def secure_path(path, boundary):
+def secure_path(path, boundary, *, allow_missing=False, evidence=None):
     path, boundary = Path(path).absolute(), Path(boundary).absolute()
     if ".." in path.parts or ".." in boundary.parts:
         raise Failure("path_outside_source_root", 5)
@@ -97,15 +97,36 @@ def secure_path(path, boundary):
     for part in (None, *relative.parts):
         if part is not None:
             current = current / part
-        info = current.lstat()
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            if not allow_missing:
+                raise
+            if evidence is not None:
+                evidence.append({"missing": str(current)})
+            return path
+        except OSError:
+            raise Failure("unsafe_artifact_owner_or_link", 5) from None
         if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
             raise Failure("unsafe_artifact_owner_or_link", 5)
         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            raise Failure("unsupported_artifact_type", 5)
+        if current != path and not stat.S_ISDIR(info.st_mode):
             raise Failure("unsupported_artifact_type", 5)
         if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
             raise Failure("ambiguous_hardlink", 5)
         if info.st_mode & 0o022:
             raise Failure("unsafe_writable_artifact", 5)
+        if evidence is not None:
+            evidence.append(
+                {
+                    "path": str(current),
+                    "dev": info.st_dev,
+                    "inode": info.st_ino,
+                    "mode": info.st_mode,
+                    "owner": info.st_uid,
+                }
+            )
     return path
 
 

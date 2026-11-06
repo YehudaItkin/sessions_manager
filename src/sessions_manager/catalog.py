@@ -28,7 +28,7 @@ def session_payload(payload):
         raise Failure("catalog_record_invalid", 6) from None
 
 
-CATALOG_SCHEMA = 3
+CATALOG_SCHEMA = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS roots(root_id TEXT PRIMARY KEY, payload TEXT NOT NULL, as_of INTEGER, state TEXT);
@@ -107,11 +107,21 @@ class Catalog:
         )
         self.connection.execute("BEGIN IMMEDIATE")
         with self.writer() as db:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS source_storage(root_id TEXT PRIMARY KEY,payload TEXT NOT NULL)"
+            )
             for table in ("generations", "locations"):
                 if "payload" not in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN payload TEXT")
             if "current_trash_id" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN current_trash_id TEXT")
+            if "lifecycle_revision" not in {
+                r[1] for r in db.execute("PRAGMA table_info(sessions)")
+            }:
+                db.execute(
+                    "ALTER TABLE sessions ADD COLUMN lifecycle_revision INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execute("ALTER TABLE sessions ADD COLUMN lifecycle_pending TEXT")
             db.execute(f"PRAGMA user_version={CATALOG_SCHEMA}")
 
     def _private_sidecars(self):
@@ -179,6 +189,17 @@ class Catalog:
             # Bind archive observations and publication under one SQLite writer
             # transaction, including readers finishing in another CLI process.
             db.execute("BEGIN IMMEDIATE")
+            revisions = getattr(scan, "lifecycle_revisions", None)
+            lifecycle_protected = {
+                row["uid"]
+                for row in db.execute(
+                    "SELECT uid,lifecycle_revision,lifecycle_pending FROM sessions WHERE lifecycle_revision>0 AND (json_extract(payload,'$.root_id')=? OR uid IN (SELECT uid FROM locations WHERE root_id=?))",
+                    (root.root_id, root.root_id),
+                )
+                if row["lifecycle_pending"]
+                or revisions is None
+                or revisions.get(row["uid"], 0) != row["lifecycle_revision"]
+            }
             evidence = {}
             for row in db.execute(
                 "SELECT uid,payload FROM locations WHERE root_id=? AND payload IS NOT NULL",
@@ -187,8 +208,10 @@ class Catalog:
                 record = json.loads(row["payload"])
                 if record["session"].get("extra", {}).get("native_archive_observed_at"):
                     evidence[row["uid"]] = Session.from_dict(record["session"])
-            protected, reconciled = set(), []
+            protected, reconciled = set(lifecycle_protected), []
             for session in sessions:
+                if session.session_uid in lifecycle_protected:
+                    continue
                 old = evidence.get(session.session_uid)
                 if old:
                     stamp = old.extra["native_archive_observed_at"]
@@ -204,7 +227,11 @@ class Catalog:
             sessions = reconciled
             publication_complete = complete and not protected
             if protected:
-                reason = "native_archive_refresh_stale"
+                reason = (
+                    "lifecycle_refresh_stale"
+                    if lifecycle_protected
+                    else "native_archive_refresh_stale"
+                )
                 details.state = details.history = details.search = details.usage = "partial"
                 details.diagnostics.append(reason)
             root._publication_reason = reason
@@ -235,6 +262,12 @@ class Catalog:
                     json.dumps(public(details)),
                 ),
             )
+            if scan is not None and scan.stage != "metadata":
+                from .storage import publish as publish_storage
+
+                publish_storage(
+                    db, root.root_id, getattr(scan, "storage", None), stale=bool(protected)
+                )
             for session in sessions:
                 previous = db.execute(
                     "SELECT payload,hidden,presence FROM sessions WHERE uid=?",
@@ -324,7 +357,7 @@ class Catalog:
                         and chosen.extra.get("identity_conflict") != "identity_conflict"
                     ):
                         self._replace_usage(db, session, usages[session.session_uid])
-            if complete:
+            if publication_complete:
                 affected = [
                     r[0]
                     for r in db.execute(
@@ -360,6 +393,26 @@ class Catalog:
                         (root.root_id, path, owner.session_uid, checkpoint),
                     )
         return generation
+
+    def begin_lifecycle(self, uid, operation):
+        with self.writer() as db:
+            changed = db.execute(
+                "UPDATE sessions SET lifecycle_revision=lifecycle_revision+1,lifecycle_pending=? WHERE uid=? AND (lifecycle_pending IS NULL OR lifecycle_pending=?)",
+                (operation, uid, operation),
+            ).rowcount
+            if not changed:
+                raise Failure("cleanup_operation_pending", 5)
+            db.execute(
+                "UPDATE source_storage SET payload=json_set(payload,'$.stale',json('true'),'$.complete',json('false')) WHERE root_id IN (SELECT root_id FROM locations WHERE uid=?)",
+                (uid,),
+            )
+
+    def finish_lifecycle(self, uid, operation):
+        with self.writer() as db:
+            db.execute(
+                "UPDATE sessions SET lifecycle_revision=lifecycle_revision+1,lifecycle_pending=NULL WHERE uid=? AND lifecycle_pending=?",
+                (uid, operation),
+            )
 
     @staticmethod
     def _save_session(db, session):

@@ -252,3 +252,17 @@ absence of sidecars are checked afterward. If WAL exists, normal read-only WAL s
 apply; a missing companion is still an error. No sidecars/repair/checkpoints are created.
 Other adapters keep the original strict default. Native archive additionally checks
 ownership/containment and observed open handles before the native writer starts.
+
+
+## Phase 12 size and timestamp observations — 2026-11-06
+
+Full refresh also measures known history trees: Codex sessions/archived_sessions plus
+state/history DB/WAL/SHM; Claude projects; Grok sessions plus named shared indices; Cursor
+chats. Explicit narrow Grok/Cursor roots use the existing native marker shapes. No-follow
+walks are bounded to depth 64 / 100,000 nodes and read stat data only. Symlink/denied/changed
+artifacts yield partial/unknown size; optional absent layouts in an accessible root can
+prove zero. This is a non-atomic observation, not per-session ownership or cleanup scope.
+Metadata-only phases do not replace size observations. Failed refresh/mutations mark
+previous evidence stale. File bodies, credentials and manager trash are excluded.
+All adapters annotate naive timestamps as ambiguous without assigning a timezone;
+missing and invalid timestamps have separate reasons. Known aware bounds are preserved.

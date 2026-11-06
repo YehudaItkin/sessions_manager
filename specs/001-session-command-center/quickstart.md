@@ -265,3 +265,24 @@ It creates four native synthetic paginated histories with a closed loopback prov
 seeds only their fixture spawn edges while the native writer is stopped, then verifies
 real native cascades and manager recovery across restart. No HOME substitution, direct
 production native DB mutation, real provider call or personal session is involved.
+
+
+## Phase 12 regression and statistics smoke
+
+```sh
+uv run pytest tests/integration/test_cleanup_recovery.py tests/integration/test_native_archive.py tests/integration/test_source_storage.py tests/contract/test_date_provenance.py tests/acceptance/test_native_archive.py -q
+```
+
+Use only the explicit synthetic config from section 3. Run JSON/human stats and stats
+for one session/project: source_storage remains the whole selected source roots, separate
+from known_session_bytes. Open statistics twice without refresh: observation/as_of stay
+cached. Synthetic trash/restore/purge followed by refresh updates bytes; an unavailable
+root keeps its dated observation with stale/incomplete coverage. These sizes are not
+reclaimable space. Dates without timezone show ambiguous; UTC dates remain usable.
+
+Catalog v1/v2/v3 upgrades to v4 on open, retaining IDs/hidden/history and operation journals.
+Use the current binary afterward; older binaries refuse v4. Before any manual rollback,
+retain the existing manager catalog and use a separately preserved compatible catalog;
+never overwrite native shared stores. Unconsumed legacy archive previews require a fresh
+preview; interrupted operations retain same-scope retry. Native Warp remains blocked by
+the recorded access denial; no automatic retry or alternate UI/shell gate is authorized.

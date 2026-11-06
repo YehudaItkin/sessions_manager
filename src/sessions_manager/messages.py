@@ -5,6 +5,10 @@ import shlex
 from .models import safe_text
 
 _MESSAGES = {
+    "archive_preview_outdated": "This archive preview predates the current path checks. Create a new preview before confirming; no native request was performed.",
+    "cleanup_operation_pending": "A cleanup operation for this session needs recovery. Retry the same operation in Trash before opening the native session.",
+    "catalog_read_failed": "The local catalog could not be read. Return to the overview and check storage access; keep the catalog for inspection.",
+    "lifecycle_refresh_stale": "This scan overlaps a cleanup operation. Finish or retry that operation, then refresh; newer session state was preserved.",
     "archive_journal_invalid": "A saved native archive plan/journal is invalid. Preserve the catalog for inspection; no automatic repair or native request was performed.",
     "archive_profile_unverified": "Native archive is verified for Codex 0.166.0 paginated stores with a configured executable/native home. Refresh or use the native CLI.",
     "archive_source_changed": "The confirmed archive graph, history or state changed. No new IDs are included. Inspect the operation and refresh before a new preview.",

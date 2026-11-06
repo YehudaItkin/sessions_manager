@@ -122,7 +122,7 @@ def emit(options, result):
         from rich.table import Table
         from rich.text import Text
 
-        from .models import Session, display_time, safe_text, short_handles
+        from .models import Session, display_session_time, display_time, safe_text, short_handles
 
         console = Console(markup=False, highlight=False)
         data = result["data"]
@@ -158,7 +158,7 @@ def emit(options, result):
                     row.provider,
                     Text(safe_text(preview), overflow="ellipsis", no_wrap=True),
                     Text(safe_text(row.cwd), overflow="ellipsis", no_wrap=True),
-                    display_time(row.last_activity_at),
+                    display_session_time(row, "last_activity_at"),
                     row.activity,
                     " ".join(
                         name
@@ -185,9 +185,12 @@ def emit(options, result):
                 )
         elif result["kind"] == "show":
             row = data["session"]
+            dated = Session.from_dict(row)
             console.print(
-                f"Manager ID: {row['display_id']}\nNative ID: {safe_text(row['native_id'])}\nSource: {row['provider']}\nProject: {safe_text(row['cwd'])}\nCreated: {display_time(row['created_at'])}\nLast activity: {display_time(row['last_activity_at'])}\nHistory: {row['history_state']}"
+                f"Manager ID: {row['display_id']}\nNative ID: {safe_text(row['native_id'])}\nSource: {row['provider']}\nProject: {safe_text(row['cwd'])}\nCreated: {display_session_time(dated, 'created_at')}\nLast activity: {display_session_time(dated, 'last_activity_at')}\nHistory: {row['history_state']}"
             )
+            if dated.extra.get("ambiguous_native_dates"):
+                console.print("Some native dates are ambiguous (timezone not recorded).")
             console.print(
                 f"History location: {safe_text(row['locator'])}\nModel: {safe_text(row['model'])}"
             )
@@ -226,6 +229,18 @@ def emit(options, result):
                 )
             console.print(table)
             print_context_metrics(console, data)
+            storage = data["source_storage"]
+            console.print(
+                "Source storage (whole history roots; not reclaimable space): "
+                + str(storage["value"] if storage["value"] is not None else "unknown")
+                + f" bytes; complete={storage['complete']}; as of {display_time(storage['as_of'])}"
+            )
+            for root in storage["roots"]:
+                console.print(
+                    safe_text(
+                        f"{root['provider']}: {root['path']}; {root['value'] if root['value'] is not None else 'unknown'} bytes; stale={root['stale']}"
+                    )
+                )
             for group in data["groups"]:
                 console.print(
                     safe_text(group["key"]) + ": " + str(group["metrics"]["total_tokens"]["value"])

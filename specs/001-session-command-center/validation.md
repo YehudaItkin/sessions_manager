@@ -454,3 +454,80 @@ T145: four terminal-purge regressions failed before implementation (error before
 - Final isolated SC-002 **5 passed**: cold **6.678 s** (<=10); warm search/navigation **1.314 s**, TUI first frame **1.242 s**, combined filter/sort **0.560 s**, TUI sort **1.299 s** (each <=2). Fresh private catalog; same seed-1 10,000 mixed sessions, requested 1,073,741,824 bytes / actual native bytes 1,130,797,988. OS caches were not flushed and were warmed by the preceding failed/profile runs. No concurrent tests/build/smoke during this measurement; thresholds unchanged. CPython 3.14.2, macOS 27.0.1 arm64, Apple M3 Pro / 18 GiB. Provenance: `{"maximum_finish": 1793888099982, "minimum_start": 1793888095596, "root_as_of": {"claude": 1793888097434, "codex": 1793888098971, "cursor": 1793888099982, "grok": 1793888099598}, "schema": 3}`.
 - Final functional suite after the performance change and additional TUI retry coverage: **359 passed, 7 skipped**. Explicit native gate and five corpus gates pass separately; only Warp's native runtime remains externally blocked. Ruff/format of 110 Python files and git diff --check PASS.
 - Sole-maintainer self-review: FR-028/spec/plan/task traceability, RED-before-change regressions, closed-set/native-version/alias/containment checks, post-call verification and uncertainty recovery, private journal validation, stale index and late-publication guards, v1/v2-to-v3 migration, CLI/TUI behavior at 80x24, native fixture/installed wheel and unchanged performance targets checked. No dependencies, daemon, direct production native SQLite DML, credential extraction, personal session action, permanent delete or whole-store rollback. Fixture-only edge seeding is explicit. Original T118 and Warp T113/T130/T144 remain open; new archive support does not bypass those gates. Requirements checklist remains read-only (16/16 PASS).
+
+
+## Phase 12 convergence implementation — 2026-11-06
+
+- T151: 14 initial lifecycle regressions failed before implementation, covering metadata/full
+  results published after trash/purge/restore, a separate Python publisher process, empty
+  enumeration before restore and interrupted cleanup. Follow-up pending-resume and competing
+  cleanup regressions also failed before fixes. Durable revisions/pending owners now guard
+  publication in its writer transaction; stale results cannot revive sessions or cache, clear
+  newer ownership or prune restored locations. Same-operation recovery releases the owner;
+  verified subsequent native reappearance still retains IDs/hidden state. Schema v1/v2/v3
+  migration and restored content invalidation are covered. Purge removes owned usage/context
+  data without clearing neighboring memberships.
+- T152: 12 missing-rollout ancestry/changed-reference regressions failed before the fix.
+  Both actions reject symlink/dangling/writable/foreign/non-directory parents before RPC;
+  existing safe missing references are supported. Frozen v3 uncertain-operation and unused
+  legacy-preview regressions failed before separate reference/history evidence preserved
+  compatible recovery while invalidating obsolete unconsumed confirmations.
+- Native follow-up: the real 0.166.0 gate initially failed archive_source_changed. Native
+  archive/unarchive rewrites missing rollout_path values between the live dated tree and
+  archived_sessions. Two synthetic successful/lost-reply rewrite regressions reproduced the
+  failure; an unexpected rewrite stayed rejected. Per-intent exact native relocation plus
+  existing-ancestor verification and durable current references now pass. Independent native
+  gate: **1 passed**, disposable offline CODEX_HOME only; original flags/history/IDs/neighbor
+  preserved across restart. Installed Python 3.12 CLI archive/archives/unarchive/refresh/show/
+  hide/unhide also passes that actual 0.166.0 gate. Production code contains no native DB DML.
+- T153: both corrupted-journal and service-initialization Pilot scenarios failed before
+  safe error handling. Archives shows a content-free explanation, preserves the journal and
+  returns to the ordinary overview without native RPC. CLI machine codes remain stable.
+- T154/T113/T130/T144: **BLOCKED**, previous Computer Use denial for
+  dev.warp.Warp-Stable remains in force. No Warp runtime/alternate shell or UI route was
+  attempted. URI delivery is not counted as successful handoff. This external gate is
+  independent of the five completed code tasks; T118 remains conditional and Grok shared
+  indices remain unavailable for cleanup.
+- T155: seven initial storage integration/CLI cases failed before implementation. Follow-up
+  all-conflicted and missing-source/default-coverage regressions failed before correction.
+  Measurements are cached on full refresh, separate from session allocation, deduplicated
+  by device/inode across overlapping roots and explicit about as_of/coverage/staleness.
+  Stats opening performs no source walk. Empty zero differs from missing/denied/partial;
+  symlinks are not followed, conflicts are not counted as known zero, mutations invalidate
+  observations, and CLI/TUI/JSON explain whole-source scope and non-reclaimable bytes.
+- T156: **22** metadata/CLI/Pilot regressions failed before per-field date provenance.
+  All four sources now distinguish naive/aware/absent/invalid dates and mixed histories.
+  Naive dates remain ambiguous; known aware bounds survive filters and incomplete ranges.
+  Legacy payloads retain existing UTC instants; ordinary refresh adds the new annotations.
+
+Validation after implementation:
+- Full functional suite: **427 passed, 7 skipped**, 78.83 s. Five explicit-corpus performance
+  gates, one native Codex opt-in and one native Warp opt-in are skipped in the default run;
+  performance/native Codex are run separately, Warp remains blocked.
+- Ruff check/format: **PASS**, 113 Python files. git diff --check: **PASS**.
+- Final isolated SC-002 on schema v4: **5 passed**. Cold **7.652 s** (<=10); warm
+  search/navigation **1.769 s**, TUI first frame **1.253 s**, combined filter/sort **0.585 s**,
+  TUI sort **1.348 s** (each <=2). Seed-1 mixed 10,000-session corpus, requested
+  1,073,741,824 bytes / actual native bytes **1,130,076,804**. Fresh private manager catalog;
+  OS caches not flushed, corpus just generated; no simultaneous test/build/smoke workload.
+  Subsequent changes are native archive coordinator/fixture-only paths absent from this
+  read/search benchmark. Targets unchanged. CPython 3.14.2, SQLite 3.50.4, macOS 27.0.1 arm64,
+  Apple M3 Pro / 18 GiB. Provenance:
+  {"maximum_finish":1793949084929,"minimum_start":1793949079621,"root_as_of":{"claude":1793949081806,"codex":1793949082488,"cursor":1793949084929,"grok":1793949084304},"schema":4}.
+- Wheel/sdist build **PASS**. Fresh outside-checkout locked wheel environment on Python
+  **3.12.12 / SQLite 3.54.1** passes help/version/refresh/list/show/stats/resume dry-run,
+  hide/unhide, source-storage/provenance output and two trash/restore/purge cycles. All native
+  hashes of 40 synthetic sessions remain identical; installed package path is in that venv.
+  Wheel SHA-256: fc6f23b3c1f7cce36cbdc9627fa34f42bfd65ba46a380acbc37b30b0e688dbe1.
+- The default installed Codex is now **0.167.0**; its explicit native gate refuses the
+  version before fixture creation. The supported 0.166.0 binary remains installed and was
+  used for the passing native/installed-console gates above. 0.167.0 Archive compatibility
+  is not claimed or enabled; exact actual-executable checking remains intact.
+- Sole-maintainer self-review: Phase 12 source refs/constitution, observed RED-to-GREEN
+  evidence, cross-process lifecycle guards, exact native scope/relocation/uncertainty,
+  private state/provenance and retention, additive v4 migration/legacy recovery, public
+  CLI/TUI contracts, package isolation and unchanged SC-002 reviewed. No new dependency,
+  daemon, cloud/AI call, source repair, personal history operation or unsafe cleanup profile.
+  Requirements checklist is unchanged at **16/16 PASS**. .specify/extensions.yml absent;
+  pre/post implementation hooks do not apply. Five Phase 12 code tasks are complete;
+  the external Warp gate remains unmarked.
