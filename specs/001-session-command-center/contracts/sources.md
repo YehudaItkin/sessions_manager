@@ -283,3 +283,24 @@ links (including dangling links), denied parents and substituted directories giv
 enumeration/storage reasons, never complete empty zero. An explicitly configured root
 alias remains valid; resolving an intermediate link does not authorize outside traversal.
 Storage uses metadata only, retains inode dedup/as_of, and is not remeasured on stats open.
+
+
+## Phase 14 reader/evidence amendment — 2026-11-06
+
+Cursor's adapter-local decoded graph cache is keyed by physical locator; native agent ID
+alone is not a cache key for different accepted locations. Native readers, scan maps and
+IPC preserve the same per-copy distinction before identity agreement.
+
+Usage agreement is independent of the history digest. Current-cycle normalized lifetime
+facts/snapshots, ownership/scopes, counters and completeness must agree across aliases.
+Pending, failed or conflicting peers yield explicit partial/unknown usage without hiding
+agreed history. Different physical file stamps and context observation times are not
+lifetime differences. Claude's within-stream monotonic receipt reconciliation remains;
+disagreeing copies are not assumed newer by path or completion order.
+
+Grok's proved eventId identifies a packet, separately from message/prompt IDs. Exact
+replay is ignored before applying text deltas or tool status; different packets containing
+the same text are retained. Conflicting payloads for one packet ID make history partial
+and retain the first observation, without appending contradictory text. Supported-field
+projection is shared with JSONL checkpoints; unknown properties are not persisted.
+Normalizer 4 invalidates previous history/search/parser caches for these corrections.

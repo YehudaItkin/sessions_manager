@@ -175,6 +175,12 @@ Config sources принимает только массив объектов; en
 Модель SourceRoot также проверяет boolean default_root при deserialization.
 Неверная форма config возвращает safe invalid_config/exit 2 до каталога, scan и runtime state.
 
+Alias usage adds usage_identity_conflict/usage_binding_unverified reasons to capabilities
+and metric coverage. Agreed history remains readable; unverified lifetime totals are null,
+not a selected copy's value or a sum of copies. Trash listing validates persisted recovery
+records/manifests; malformed records use safe catalog_record_invalid, while existing
+filesystem/SQLite error contracts remain. TUI explains the error and returns to overview.
+
 Пример метрики: `{"value": null, "reason": "not_recorded", "known_sessions": 0,
 "selected_sessions": 4, "complete": false}`.
 Известный ноль — value=0; отсутствие lifetime tokens Cursor не превращается в 0.

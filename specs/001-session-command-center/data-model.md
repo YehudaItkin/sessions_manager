@@ -373,3 +373,23 @@ clears that owner. No journal deletion or generic unlock is a recovery mechanism
 SourceRoot.enabled/default_root require exact booleans on construction/deserialization.
 Config sources requires an array of objects before runtime preparation; malformed shapes
 or flags yield safe invalid_config/exit 2. Disabled roots retain prior generation/as_of.
+
+
+## Phase 14 normalized evidence — 2026-11-06
+
+locations.payload adds nullable usage for rare alias groups: normalized UsageResult
+receipts/snapshots/memberships and context observations, without native transcript bodies.
+Semantic agreement compares lifetime scopes/ownership/values/completeness, excluding
+physical stat revisions and context timestamps. The existing ledger is populated only
+after all locations/verified absences reconcile, so a provisional copy cannot rewrite
+another session's shared request fact. Retaining normalized evidence permits recovery of
+the surviving location's own counters when the absent peer publishes last. No schema
+change: user_version stays 4; old location payloads require refresh before usage agreement.
+
+Session.extra.usage_conflict is usage_identity_conflict or usage_binding_unverified.
+These suppress unverified lifetime values and mark coverage partial while preserving
+independently agreed history. Source/path ordering never selects a supposedly newer total.
+Cursor context occupancy remains separate. Purge of the current lifecycle clears owned
+location payloads as well as ledger/context/parser/history data; an older entry cannot
+clear newer evidence. Normalizer 4 rebuilds old history/search/parser caches, retaining
+stable IDs, hidden state and journals.

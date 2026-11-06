@@ -612,6 +612,7 @@ class CleanupService:
                 db.execute("DELETE FROM usage_memberships WHERE uid=? OR origin_uid=?", (uid, uid))
                 db.execute("DELETE FROM usage_snapshots WHERE uid=?", (uid,))
                 db.execute("DELETE FROM context_metrics WHERE uid=?", (uid,))
+                db.execute("UPDATE locations SET payload=NULL WHERE uid=?", (uid,))
                 db.execute(
                     "DELETE FROM usage_facts WHERE fact_uid NOT IN (SELECT fact_uid FROM usage_memberships)"
                 )
@@ -749,18 +750,47 @@ class CleanupService:
             return {"operation_id": op, "items": result}
 
     def trash_list(self):
+        try:
+            return self._trash_list()
+        except (ValueError, TypeError, KeyError, AttributeError, StopIteration):
+            raise Failure("catalog_record_invalid", 6) from None
+
+    @staticmethod
+    def _progress(payload, operation_id):
+        from .models import OperationItem
+
+        value = json.loads(payload)
+        OperationItem(
+            operation_id,
+            value["target_id"],
+            "trash",
+            value["state"],
+            trash_id=value["trash_id"],
+            error=value["error"],
+            recovery_options=value["recovery_options"],
+            cleanup_pending=value.get("cleanup_pending", False),
+        )
+        return value
+
+    def _trash_list(self):
+        from .models import OPERATION_STATES
+
         items = []
         represented = set()
         for row in self.catalog.connection.execute(
             "SELECT trash_id,session_uid,state,operation_id FROM trash_entries ORDER BY rowid"
         ):
+            self._ids("restore", [row["trash_id"]])
+            self._entry(row["trash_id"])
             state = row["state"]
+            if state not in OPERATION_STATES:
+                raise ValueError()
             current = self.catalog.connection.execute(
                 "SELECT i.operation_id,i.payload FROM operation_items i JOIN operations o USING(operation_id) WHERE i.target_id=? OR json_extract(i.payload,'$.trash_id')=? ORDER BY o.created_at DESC,o.rowid DESC LIMIT 1",
                 (row["trash_id"], row["trash_id"]),
             ).fetchone()
             operation_id = current[0] if current else row["operation_id"]
-            progress = json.loads(current[1]) if current else {}
+            progress = self._progress(current[1], operation_id) if current else {}
             if current:
                 represented.add((operation_id, progress["target_id"]))
             owner = self.catalog.connection.execute(
@@ -800,7 +830,7 @@ class CleanupService:
         ):
             if (row["operation_id"], row["target_id"]) in represented:
                 continue
-            progress = json.loads(row["payload"])
+            progress = self._progress(row["payload"], row["operation_id"])
             target = next(t for t in json.loads(row["plan"]) if t["target_id"] == row["target_id"])
             owner = self.catalog.connection.execute(
                 "SELECT lifecycle_pending FROM sessions WHERE uid=?", (target["session_uid"],)

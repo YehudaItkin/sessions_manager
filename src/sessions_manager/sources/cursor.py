@@ -76,7 +76,7 @@ class Adapter:
                 if not hasattr(self, "_history"):
                     self._history = {}
                 if not getattr(self, "metadata_only", False):
-                    self._history[native_meta.get("agentId")] = graph(
+                    self._history[str(store.parent)] = graph(
                         native_meta.get("latestRootBlobId"),
                         load,
                         self.root.namespace_id + ":" + str(native_meta.get("agentId")),
@@ -120,8 +120,8 @@ class Adapter:
             return None
 
     def read_history(self, session):
-        if session.native_id in getattr(self, "_history", {}):
-            return self._history[session.native_id]
+        if session.locator in getattr(self, "_history", {}):
+            return self._history[session.locator]
         from pathlib import Path
 
         from ..models import HistoryResult

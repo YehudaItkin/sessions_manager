@@ -452,3 +452,35 @@ opening stats still performs no source enumeration.
 T161 validates TOML container shapes and exact boolean control fields before runtime
 preparation. All preserve existing profiles, recovery/privacy constraints and SC-002;
 T159 remains an independent blocked Warp gate.
+
+## Phase 14 implementation decisions — 2026-11-06
+
+Cursor's existing decoded-graph cache uses physical locators, like scan/IPC buffers;
+native ID alone cannot distinguish two accepted copies. Normalizer revision 4 rebuilds
+older history/search/parser caches so a cached incorrect graph is not reused unchanged.
+Resume dialogs capture the selected UID and source observation through every callback
+and manual-guide retry; current table position is never a replacement target.
+
+Alias usage is reconciled separately from conversation identity. Existing location
+payloads retain normalized usage evidence for the current refresh cycle; mismatching or
+pending proof suppresses unverified lifetime values without hiding agreed history.
+Only rare alias groups retain the extra normalized receipts/snapshots/context observations,
+never native transcript bodies. A digest alone cannot restore the surviving copy's usage
+when an absent peer completes last; a new per-location ledger would add an unnecessary
+schema. Reusing location payloads preserves that evidence without a new table/service or
+dependency. Semantic comparison excludes physical file stamps and context observation
+times; different lifetime totals are partial until agreement, not guessed newer by path.
+
+Trash listing errors are handled at the same UI boundary as native archive errors, with
+safe journal validation and no repair. Grok packets are deduplicated by verified event ID
+and supported payload; different event IDs retain legitimate repeated text. Conflicting
+duplicates make history partial. The existing normalizer/checkpoint lifecycle handles
+cache rebuilding. Native runtime acceptance remains explicit and isolated; the Warp
+access denial, Codex cleanup gate and exact 0.166.0 archive profile remain unchanged.
+
+SC-002 follow-up: the first isolated warm search/navigation gate failed at 2.036 s.
+Profiling found two full 10,000-session deserializations per list: the second only built
+global short handles. An identity-only catalog projection reuses the same short_handles
+algorithm, including hidden/missing/archived rows and validating IDs. Candidate metadata
+still uses full typed decoding. This removes redundant work without a session cache,
+stale invalidation protocol, new schema or changed collision/pagination semantics.

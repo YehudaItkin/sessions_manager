@@ -164,7 +164,12 @@ def scan_root(argument):
                     session.extra["identity_digest"] = checksum.hexdigest()
                     session.extra["identity_digest_version"] = "2"
             session.extra["normalizer_version"] = NORMALIZER_VERSION
-            if unchanged and old.extra.get("usage_version") == "4" and old.usage_state != "partial":
+            if (
+                unchanged
+                and not compare_identity
+                and old.extra.get("usage_version") == "4"
+                and old.usage_state != "partial"
+            ):
                 session.usage_state = old.usage_state
                 session.capabilities["usage"] = old.capabilities["usage"]
             else:

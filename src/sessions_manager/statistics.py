@@ -78,6 +78,11 @@ def _token_metrics(sessions, facts, members, snapshots, *, allowed=None, allow_s
             if value is None
             else "partial_coverage"
         )
+        alias_reasons = {s.extra.get("usage_conflict") for s in sessions}
+        if "usage_identity_conflict" in alias_reasons:
+            reason = "usage_identity_conflict"
+        elif "usage_binding_unverified" in alias_reasons:
+            reason = "usage_binding_unverified"
         result[category] = {
             "value": value,
             "reason": reason,

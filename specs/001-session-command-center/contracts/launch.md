@@ -174,3 +174,21 @@ change to its externally blocked runtime gate.
 Bindings must cover the exact current set of (root_id, locator), not just distinct roots.
 Rediscovery verifies every copy and its fingerprint; a newly appeared copy blocks handoff.
 For matching copies in one root, resume uses the verified request's selected locator.
+
+
+## Phase 14 dialog and native acceptance — 2026-11-06
+
+Open captures the selected stable UID plus root/locator/fingerprint/cwd observation and
+shows its IDs/source/history location. Every terminal/cwd callback and manual-guide retry
+uses that target, regardless of current table position/filter/order. A changed/missing
+observation refuses with source_changed; the neighbor never replaces it. The final native
+request still performs all existing catalog/source/executable/cwd revalidation.
+
+Explicit native current-terminal gates for Claude/Grok/Cursor are separate from the
+harmless Warp gate and the supported Codex 0.166.0 gate. Native output/exit or matching
+argv alone is not conversation_loaded. The opt-in harness requires generated marker,
+same ID, observed cwd, no new sessions and preserved neighbor. Its native child has an
+isolated HOME/default roots, minimal environment, OS-denied network/keychain/personal
+stores and writes confined to disposable files. Parent HOME is unchanged. Failure to
+load under these boundaries remains unverified; the harness never weakens containment
+or falls back to a real store. Warp's existing access denial remains in force.
