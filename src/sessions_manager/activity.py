@@ -72,16 +72,21 @@ def observe(root, sessions, *, probe=None):
                     records.append(value)
     except (OSError, ValueError):
         pass
-    by_id = {s.native_id: s for s in sessions}
+    by_id = {}
     for session in sessions:
+        by_id.setdefault(session.native_id, []).append(session)
         session.activity = "unknown"
         session.activity_evidence = {}
     if root.executable_path is None:
         return
     for record in records:
         native = record.get("session_id") or record.get("sessionId")
-        session = by_id.get(native) if isinstance(native, str) else None
-        if session is None or record.get("cwd") != session.cwd:
+        matching = (
+            [s for s in by_id.get(native, []) if record.get("cwd") == s.cwd]
+            if isinstance(native, str)
+            else []
+        )
+        if not matching:
             continue
         if type(record.get("pid")) is not int or type(record.get("pid_start")) is not int:
             continue
@@ -92,16 +97,18 @@ def observe(root, sessions, *, probe=None):
             "executable": str(root.executable_path.resolve()),
         }
         state = verify(expected, probe or process_info)
-        if state == "active":
+        for session in matching:
+            if session.activity == "active" and state != "active":
+                continue
             session.activity = state
-        session.activity_evidence = public(
-            ActivityEvidence(
-                session.session_uid,
-                status=state,
-                evidence_kind="native_registry",
-                pid=expected["pid"],
-                process_start_identity=str(expected["pid_start"]),
-                resolved_executable=expected["executable"],
-                confidence="verified",
+            session.activity_evidence = public(
+                ActivityEvidence(
+                    session.session_uid,
+                    status=state,
+                    evidence_kind="native_registry",
+                    pid=expected["pid"],
+                    process_start_identity=str(expected["pid_start"]),
+                    resolved_executable=expected["executable"],
+                    confidence="verified",
+                )
             )
-        )

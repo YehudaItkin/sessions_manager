@@ -6,15 +6,17 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 import uuid
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 
 from . import fsops
 from .config import ensure_private, private_file
 from .discovery import adapter
-from .models import Failure, TrashEntry, now_ms, public
+from .models import OPERATION_STATES, Failure, TrashEntry, now_ms, public
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS operation_plans(plan_id TEXT PRIMARY KEY,action TEXT,ids TEXT,payload TEXT,token_digest TEXT UNIQUE,expires_at INTEGER,operation_id TEXT);
@@ -26,6 +28,69 @@ CREATE TABLE IF NOT EXISTS trash_entries(trash_id TEXT PRIMARY KEY,session_uid T
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
+
+
+def record_boundary(function):
+    @wraps(function)
+    def checked(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            StopIteration,
+            IndexError,
+            RecursionError,
+        ):
+            raise Failure("catalog_record_invalid", 6) from None
+
+    return checked
+
+
+@record_boundary
+def plan_targets(row):
+    from .models import PROVIDERS, SourceRoot, validate_artifacts, validate_inventory
+
+    action, ids, targets = row["action"], json.loads(row["ids"]), json.loads(row["payload"])
+    if (
+        action not in ("trash", "restore", "purge")
+        or not isinstance(ids, list)
+        or not ids
+        or not isinstance(targets, list)
+        or len(set(ids)) != len(ids)
+        or [t["target_id"] for t in targets] != ids
+    ):
+        raise ValueError()
+    for target in targets:
+        if (
+            any(
+                not isinstance(target[k], str) or not target[k] or "\0" in target[k]
+                for k in ("target_id", "session_uid", "profile")
+            )
+            or target["provider"] not in PROVIDERS
+            or target["activity"] not in ("active", "inactive", "unknown")
+        ):
+            raise ValueError()
+        root = SourceRoot(**target["root"]) if action == "trash" else None
+        validate_artifacts(target["artifacts"], root.path if root else None)
+        if root:
+            from .models import identity
+
+            if (
+                root.provider != target["provider"]
+                or target["target_id"] != "s-" + target["session_uid"]
+                or target["session_uid"] != identity(root.namespace_id, target["native_id"])
+            ):
+                raise ValueError()
+        elif not re.fullmatch(r"[a-f0-9]{64}", target["entry_digest"]):
+            raise ValueError()
+        if "staging_inventory" in target:
+            if action != "purge":
+                raise ValueError()
+            validate_inventory(target["staging_inventory"])
+    return targets
 
 
 class CleanupService:
@@ -87,6 +152,20 @@ class CleanupService:
         if len(set(normalized)) != len(normalized):
             raise Failure("duplicate_operation_target", 2)
         return normalized
+
+    def _targets(self, row):
+        targets = plan_targets(row)
+        if row["action"] in ("restore", "purge"):
+            for target in targets:
+                entry, _ = self._entry(target["target_id"])
+                if (
+                    target["session_uid"] != entry["session_uid"]
+                    or target["provider"] != entry["source_root"]["provider"]
+                    or target["profile"] != entry["source_profile"]
+                    or (entry["state"] != "purged" and target["artifacts"] != entry["artifacts"])
+                ):
+                    raise Failure("catalog_record_invalid", 6)
+        return targets
 
     def _snapshot(self, session):
         if (
@@ -156,6 +235,7 @@ class CleanupService:
         if files and fsops.open_handles(files):
             raise Failure("observed_open_handle", 5)
 
+    @record_boundary
     def _entry(self, trash_id):
         row = self.catalog.connection.execute(
             "SELECT * FROM trash_entries WHERE trash_id=?", (trash_id,)
@@ -164,14 +244,22 @@ class CleanupService:
             raise Failure("trash_not_found", 2)
         entry = json.loads(row["payload"])
         TrashEntry(**entry)
+        if (
+            any(entry[key] != row[key] for key in ("trash_id", "session_uid", "operation_id"))
+            or row["state"] not in OPERATION_STATES
+        ):
+            raise ValueError()
         if entry["owner_uid"] != os.getuid():
             raise Failure("trash_owner_mismatch", 5)
         directory = self.config.data_dir / "trash" / trash_id
         if row["state"] != "purged":
             fsops.secure_path(directory, self.config.data_dir / "trash")
             manifest = directory / "manifest.json"
-            if manifest.is_symlink() or digest(manifest.read_bytes()) != row["manifest_digest"]:
+            raw = manifest.read_bytes() if not manifest.is_symlink() else b""
+            if manifest.is_symlink() or digest(raw) != row["manifest_digest"]:
                 raise Failure("trash_manifest_changed", 5)
+            if json.loads(raw) != entry:
+                raise ValueError()
         entry["state"] = row["state"]
         return entry, directory
 
@@ -194,6 +282,61 @@ class CleanupService:
                 if path.exists() and not fsops.matches(path, artifact["inventory"], subset=subset):
                     raise Failure("trash_payload_changed", 5)
 
+    def _staging_snapshot(self, entry, directory):
+        """Prove an unused backup, including a prefix left by an interrupted copy."""
+        snapshot = fsops.inventory(directory, self.config.data_dir / "trash")
+        if any(p.name not in {"manifest.json", "backup", "payload"} for p in directory.iterdir()):
+            raise Failure("unknown_trash_artifact", 5)
+        payload = directory / "payload"
+        if payload.exists() and any(payload.iterdir()):
+            raise Failure("recovery_location_conflict", 5)
+        backup = directory / "backup"
+        if backup.exists():
+            fsops.secure_path(backup, directory)
+            if any(
+                p.name not in {str(i) for i in range(len(entry["artifacts"]))}
+                for p in backup.iterdir()
+            ):
+                raise Failure("unknown_trash_artifact", 5)
+        for i, artifact in enumerate(entry["artifacts"]):
+            copy = backup / str(i)
+            if not copy.exists():
+                continue
+            actual = fsops.inventory(copy, directory)
+            expected = artifact["inventory"]
+            if not set(actual) <= set(expected):
+                raise Failure("unknown_trash_artifact", 5)
+            for name, row in actual.items():
+                wanted = expected[name]
+                if row["kind"] != wanted["kind"]:
+                    raise Failure("trash_payload_changed", 5)
+                if row["kind"] != "file" or row["sha256"] == wanted["sha256"]:
+                    continue
+                if row["size"] >= wanted["size"]:
+                    raise Failure("trash_payload_changed", 5)
+                source = Path(artifact["source"])
+                source = source if name == "." else source / name
+                source = fsops.secure_path(source, Path(entry["source_root"]["path"]))
+                fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd, "rb") as stream:
+                    if fsops._stat(os.fstat(stream.fileno())) != wanted["stat"]:
+                        raise Failure("source_changed", 5)
+                    checksum, remaining = hashlib.sha256(), row["size"]
+                    while remaining:
+                        block = stream.read(min(1024 * 1024, remaining))
+                        if not block:
+                            raise Failure("source_changed", 5)
+                        checksum.update(block)
+                        remaining -= len(block)
+                    if (
+                        checksum.hexdigest() != row["sha256"]
+                        or fsops._stat(os.fstat(stream.fileno())) != wanted["stat"]
+                    ):
+                        raise Failure("trash_payload_changed", 5)
+        if not fsops.matches(directory, snapshot, fingerprints=True):
+            raise Failure("trash_payload_changed", 5)
+        return snapshot
+
     def preview(self, action, ids):
         ids = self._ids(action, ids)
         targets = []
@@ -204,7 +347,10 @@ class CleanupService:
                 entry, directory = self._entry(target)
                 if entry["state"] == "purged":
                     raise Failure("trash_already_purged", 4)
-                self._validate_entry(entry, directory)
+                staging = action == "purge" and entry["state"] == "failed_no_change"
+                staging_inventory = self._staging_snapshot(entry, directory) if staging else None
+                if not staging:
+                    self._validate_entry(entry, directory)
                 if action == "restore":
                     root = self._root(entry["source_root"]["root_id"])
                     if (
@@ -227,6 +373,8 @@ class CleanupService:
                     "activity": "unknown",
                     "entry_digest": digest(json.dumps(entry, sort_keys=True).encode()),
                 }
+                if staging_inventory is not None:
+                    snapshot["staging_inventory"] = staging_inventory
             targets.append(snapshot)
         token = secrets.token_hex(32)
         plan_id = str(uuid.uuid4())
@@ -258,7 +406,11 @@ class CleanupService:
                 ).values()
             )
         visible = [
-            {k: v for k, v in target.items() if k not in ("root", "entry_digest", "artifacts")}
+            {
+                k: v
+                for k, v in target.items()
+                if k not in ("root", "entry_digest", "artifacts", "staging_inventory")
+            }
             | {"artifacts": [a["source"] for a in target["artifacts"]]}
             for target in targets
         ]
@@ -288,9 +440,11 @@ class CleanupService:
             row = self.catalog.connection.execute(
                 "SELECT * FROM operation_plans WHERE token_digest=?", (digest(token.encode()),)
             ).fetchone()
-        if row is None or row["action"] != action or json.loads(row["ids"]) != ids:
+        if row is None:
             raise Failure("confirmation_mismatch", 7)
-        targets = json.loads(row["payload"])
+        targets = self._targets(row)
+        if row["action"] != action or [t["target_id"] for t in targets] != ids:
+            raise Failure("confirmation_mismatch", 7)
         if not row["operation_id"] and row["expires_at"] < now_ms():
             raise Failure("confirmation_expired", 7)
         if (
@@ -575,7 +729,11 @@ class CleanupService:
                 cleanup_pending=False,
             )
             return
-        self._validate_entry(entry, directory, subset=True)
+        if "staging_inventory" in target:
+            if not fsops.matches(directory, target["staging_inventory"], subset=True):
+                raise Failure("trash_payload_changed", 5)
+        else:
+            self._validate_entry(entry, directory, subset=True)
         for category in ("payload", "backup"):
             self._closed_handles(entry["artifacts"], location=directory / category)
         self._entry_state(entry["trash_id"], "purging")
@@ -682,7 +840,9 @@ class CleanupService:
                     "SELECT payload FROM operation_items WHERE operation_id=? AND target_id=?",
                     (op, target["target_id"]),
                 ).fetchone()
-                item = json.loads(row[0])
+                item = self._progress(row[0], op, validate_trash=False)
+                if item["target_id"] != target["target_id"]:
+                    raise Failure("catalog_record_invalid", 6)
                 if item["state"] in (
                     "trashed",
                     "restored",
@@ -695,7 +855,19 @@ class CleanupService:
                 self.catalog.begin_lifecycle(target["session_uid"], op)
                 self._checkpoint("lifecycle_started", item["target_id"])
                 try:
-                    if action == "trash":
+                    if (
+                        action == "trash"
+                        and item["state"] == "failed_no_change"
+                        and item.get("cleanup_pending")
+                    ):
+                        # Finish only the reserved manager entry. The failed source
+                        # operation stays terminal; deletion needs a new preview.
+                        entry, _ = self._begin_entry(op, target, item)
+                        self._entry_state(entry["trash_id"], "failed_no_change")
+                        item.update(
+                            cleanup_pending=False, recovery_options=["new_preview", "purge"]
+                        )
+                    elif action == "trash":
                         self._trash(op, target, item)
                     elif action == "restore":
                         self._restore(op, target, item)
@@ -730,10 +902,22 @@ class CleanupService:
                             if changed
                             else ["new_preview"]
                         )
+                        if action == "trash" and not changed and item["trash_id"] and not durable:
+                            directory = self.config.data_dir / "trash" / item["trash_id"]
+                            if directory.exists():
+                                item.update(
+                                    cleanup_pending=True,
+                                    recovery_options=["retry_same_confirmation", "inspect_trash"],
+                                )
                         if item["trash_id"]:
                             self._entry_state(item["trash_id"], item["state"])
                 self._save_item(op, item)
-                if item["state"] in ("trashed", "restored", "purged", "failed_no_change"):
+                if item["state"] in (
+                    "trashed",
+                    "restored",
+                    "purged",
+                    "failed_no_change",
+                ) and not item.get("cleanup_pending"):
                     self._checkpoint("item_terminal", item["target_id"])
                     self.catalog.finish_lifecycle(target["session_uid"], op)
                 result.append(item)
@@ -756,16 +940,20 @@ class CleanupService:
             raise Failure("catalog_record_invalid", 6) from None
 
     @staticmethod
-    def _progress(payload, operation_id):
+    @record_boundary
+    def _progress(payload, operation_id, *, validate_trash=True):
         from .models import OperationItem
 
         value = json.loads(payload)
+        trash_id = value["trash_id"]
+        if trash_id is not None and not isinstance(trash_id, str):
+            raise ValueError()
         OperationItem(
             operation_id,
             value["target_id"],
             "trash",
             value["state"],
-            trash_id=value["trash_id"],
+            trash_id=trash_id if validate_trash else None,
             error=value["error"],
             recovery_options=value["recovery_options"],
             cleanup_pending=value.get("cleanup_pending", False),
@@ -803,6 +991,8 @@ class CleanupService:
                 if state == "purged"
                 else ["purge"]
                 if state == "restored"
+                else ["new_preview", "purge"]
+                if state == "failed_no_change"
                 else ["restore", "purge"]
                 if state == "trashed"
                 else ["retry_same_confirmation", "inspect_trash"]
@@ -826,12 +1016,15 @@ class CleanupService:
                 }
             )
         for row in self.catalog.connection.execute(
-            "SELECT i.operation_id,i.target_id,i.payload,p.payload AS plan FROM operation_items i JOIN operation_plans p USING(operation_id) JOIN operations o USING(operation_id) WHERE o.state IN ('running','partial') ORDER BY o.created_at,i.target_id"
+            "SELECT i.operation_id,i.target_id,i.payload,p.payload AS plan,p.ids,p.action FROM operation_items i JOIN operation_plans p USING(operation_id) JOIN operations o USING(operation_id) WHERE o.state IN ('running','partial') ORDER BY o.created_at,i.target_id"
         ):
             if (row["operation_id"], row["target_id"]) in represented:
                 continue
             progress = self._progress(row["payload"], row["operation_id"])
-            target = next(t for t in json.loads(row["plan"]) if t["target_id"] == row["target_id"])
+            targets = self._targets(
+                {"action": row["action"], "ids": row["ids"], "payload": row["plan"]}
+            )
+            target = next(t for t in targets if t["target_id"] == row["target_id"])
             owner = self.catalog.connection.execute(
                 "SELECT lifecycle_pending FROM sessions WHERE uid=?", (target["session_uid"],)
             ).fetchone()
@@ -857,11 +1050,11 @@ class CleanupService:
 
     def recovery_preview(self, operation_id):
         row = self.catalog.connection.execute(
-            "SELECT action,payload FROM operation_plans WHERE operation_id=?", (operation_id,)
+            "SELECT * FROM operation_plans WHERE operation_id=?", (operation_id,)
         ).fetchone()
         if row is None:
             raise Failure("operation_not_found", 2)
-        targets = json.loads(row["payload"])
+        targets = self._targets(row)
         return {
             "action": "cleanup-retry",
             "operation_id": operation_id,
@@ -881,13 +1074,13 @@ class CleanupService:
 
     def retry(self, operation_id, *, assert_closed=False):
         row = self.catalog.connection.execute(
-            "SELECT action,ids FROM operation_plans WHERE operation_id=?", (operation_id,)
+            "SELECT * FROM operation_plans WHERE operation_id=?", (operation_id,)
         ).fetchone()
         if row is None:
             raise Failure("operation_not_found", 2)
         return self.commit(
             row["action"],
-            json.loads(row["ids"]),
+            [t["target_id"] for t in self._targets(row)],
             None,
             assert_closed=assert_closed,
             _operation_id=operation_id,

@@ -274,3 +274,22 @@ and return to overview; an invalid journal is preserved and never reported as an
 archive. cleanup_operation_pending blocks Open/new cleanup until same-operation recovery.
 lifecycle_refresh_stale marks late/overlapping scan results partial; no cached state is
 silently replaced. Machine codes and envelope version 1 remain stable/additive.
+
+## Phase 15 recovery actions
+
+Terminal failed_no_change entries expose available_actions=[new_preview,purge] and
+recoverable_copy=false. In TUI, New preview prepares deletion of the original stable
+session ID with a new confirmation; Purge prepares a separate irreversible staging
+cleanup. CLI equivalents remain delete ID and trash purge TRASH_ID, each followed
+by its own --confirm token. Repeating an old failed confirmation returns its previous
+outcome; it does not perform a new deletion and is not advertised as a useful Retry.
+
+If a reserved staging directory lacks its durable entry, cleanup_pending retains the
+original operation/lifecycle owner. Trash lists that operation with Retry; retry finishes
+only manager registration and releases the owner, retaining failed_no_change. New
+deletion requires a new preview. No generic unlock or automatic staging purge.
+
+Malformed nested entries/plans/progress return catalog_record_invalid/exit 6 without
+their contents. TUI handles expected manifest/filesystem/SQLite failures during preview
+and confirmation as well as listing, preserves the journal and returns to overview.
+Schema/envelope version remains unchanged; old valid optional defaults are supported.

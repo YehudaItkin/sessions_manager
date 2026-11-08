@@ -12,7 +12,13 @@ def test_action_and_payload_identity_validation():
 
 @pytest.mark.parametrize(
     "values",
-    [{"action": "remove_all"}, {"state": "done"}, {"updated_at": True}, {"operation_id": ""}],
+    [
+        {"action": "remove_all"},
+        {"state": "done"},
+        {"updated_at": True},
+        {"operation_id": ""},
+        {"error": {"PRIVATE-SENTINEL": "secret"}},
+    ],
 )
 def test_operation_item_validates_boundary_fields(values):
     args = {"operation_id": "op", "target_id": "session", "action": "trash"} | values

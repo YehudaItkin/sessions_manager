@@ -341,3 +341,32 @@ personal stores and writes outside disposable files. No credentials, prompt, AI 
 fallback is supplied. Missing containment refuses the gate. Explicit failures are recorded
 as unverified, never passing; see validation.md for startup limits. This is independent of
 Warp: the recorded denial still forbids its runtime/alternate UI or shell access.
+
+## Phase 15 validation
+
+```sh
+uv run pytest tests/integration/test_native_sqlite.py tests/integration/test_cursor_snapshot.py \
+  tests/integration/test_cleanup_validation.py tests/integration/test_alias_activity.py \
+  tests/integration/test_failed_staging.py tests/acceptance/test_trash_errors.py \
+  tests/acceptance/test_cleanup.py -q
+```
+
+These use synthetic histories, live fixture WAL commits, private journals and Pilot.
+Verify coherent SQLite graph reads followed by a fresh warm update; nested malformed
+records fail safely, while valid legacy records restore. Activity survives alias order,
+warm/metadata/full publication and IPC, with matching CLI/TUI active filters.
+
+Inject a no-source-change failure before/after entry/manifest/backup creation. After
+restart, Retry may finish reserved manager registration only. A terminal entry offers
+New preview and separate Purge, not an ineffective Retry. Cancel changes nothing. A
+partial backup needs proven origin and unchanged private preview contents; substitute
+unknown bytes before/during/after preview and verify refusal with native/neighbor bytes
+retained. Run full/Ruff, installed-wheel, supported Codex archive and isolated SC-002
+checks afterward. Normalizer 5 rebuilds older caches automatically without changing
+catalog schema 4, stable IDs, hidden state or operation journals.
+
+The 2026-11-08 native opt-in run remains failed/unverified. Claude did not prove history
+loading; Cursor was denied its external temporary directory. Grok's current version-only
+output lacks the recorded [stable] suffix, so exact profile validation refuses it before
+resume. These failures do not pass SC-004. Warp remains blocked and is not accessed;
+no credentials, AI turns, network or relaxed isolation are used to work around a gate.

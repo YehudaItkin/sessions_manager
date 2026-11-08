@@ -58,6 +58,9 @@ class Adapter:
 
     def _discover_one(self, store):
         try:
+            # Bind cached content to the observation before the SQLite snapshot,
+            # never a newer WAL stamp taken after a concurrent commit.
+            inventory, known_bytes = directory_inventory(store.parent)
             sidecar = store.parent / "meta.json"
             meta = json_file(sidecar) if sidecar.exists() else {}
             if sidecar.exists() and meta.get("schemaVersion") != 1:
@@ -84,7 +87,6 @@ class Adapter:
             native = native_meta.get("agentId")
             if not isinstance(native, str) or native != store.parent.name:
                 raise Failure("unsupported_native_schema", 3)
-            inventory, known_bytes = directory_inventory(store.parent)
             session = Session.build(
                 self.root,
                 native,

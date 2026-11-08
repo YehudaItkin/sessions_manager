@@ -304,3 +304,19 @@ the same text are retained. Conflicting payloads for one packet ID make history 
 and retain the first observation, without appending contradictory text. Supported-field
 projection is shared with JSONL checkpoints; unknown properties are not persisted.
 Normalizer 4 invalidates previous history/search/parser caches for these corrections.
+
+## Phase 15 snapshot and activity boundary
+
+Each NativeSQLite context pins schema, metadata and table/blob reads in one read
+transaction. Live WAL commits may advance independently; the reader retains its coherent
+snapshot. Main/WAL/SHM replacement or topology change causes source_changed on exit.
+The closed immutable path still verifies the full main stamp and absent sidecars.
+Separate Codex DBs retain fingerprint/as_of-range checks and never claim atomicity.
+Cursor's cache fingerprint is observed before graph decoding, so a later commit forces
+rediscovery. Normalizer 5 rebuilds prior history/search/parser caches with stable IDs.
+
+Verified registry activity applies to every matching ID/cwd location, with PID birth
+and executable checks unchanged. A stale registry row cannot replace positive evidence.
+Alias publication carries current-cycle verified activity for the same identity/cwd
+instead of losing it when selecting a representative. Prior-cycle or missing evidence
+remains unknown during refresh; multi-location cleanup/archive stays unavailable.
