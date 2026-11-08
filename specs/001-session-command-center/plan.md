@@ -484,3 +484,42 @@ global short handles. An identity-only catalog projection reuses the same short_
 algorithm, including hidden/missing/archived rows and validating IDs. Candidate metadata
 still uses full typed decoding. This removes redundant work without a session cache,
 stale invalidation protocol, new schema or changed collision/pagination semantics.
+
+## Phase 15 implementation decisions — 2026-11-08
+
+NativeSQLite pins one read transaction before schema/metadata queries; native archive
+uses this same boundary without a second BEGIN. Existing main/WAL/SHM device/inode
+bindings are checked on exit. Ordinary WAL commits remain readable through the pinned
+snapshot; replacement/sidecar topology changes refuse publication. Closed immutable
+stores retain the stricter full-stamp/absent-sidecar check. Separate Codex databases
+remain non-atomic and retain their existing cross-file fingerprint/partial semantics.
+Cursor captures its directory observation before graph reading, so a later WAL commit
+cannot label older content with the new cache fingerprint. Normalizer 5 rebuilds prior
+history/search/parser caches. A single read transaction is smaller and more reliable
+than retrying each individual graph SELECT and attempting to reconstruct a snapshot.
+
+Private cleanup payloads use the existing typed roots and shared artifact/inventory
+validation. Deserialization boundaries translate malformed data into catalog_record_invalid;
+record IDs and the immutable manifest must agree with the database row. Valid old optional
+defaults remain readable. Expected filesystem/SQLite errors at TUI preview/confirmation
+keep the overview usable. No repair, schema change, dependency or native format expansion.
+
+Activity observation retains all matching physical locations. Alias reconciliation carries
+only fresh verified positive evidence for the same identity/cwd, independently of the
+representative, and discards old-cycle evidence during refresh. Unknown is never inferred
+inactive. Existing multi-location mutation guards remain mandatory.
+
+failed_no_change is terminal for source deletion. New preview explicitly prepares another
+source operation; unused staging has a separately confirmed purge. A reserved directory
+without TrashEntry retains the existing cleanup_pending/lifecycle owner until same-operation
+retry finishes only its manager record. This avoids a new staging service or generic unlock.
+For an incomplete backup, known topology plus an unchanged original-file revision and matching
+prefix prove its origin. Purge plans optionally retain staging_inventory (private hashes,
+paths/modes/stat only), binding confirmation/retry to the observed contents. Changed or unknown
+versions refuse deletion. A hash of the original complete backup alone cannot validate a
+legitimate partial copy; accepting arbitrary private contents would lose that protection.
+The existing inventory, lock, journal, no-replace and lifecycle mechanisms are reused.
+
+T171 remains an independent failed/unverified native acceptance gate; recorded Warp denial
+is unchanged and no alternate route is attempted. Full/Ruff/package, supported Codex archive
+and unchanged SC-002 gates plus documented self-review precede GitHub delivery.

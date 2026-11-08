@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 PROVIDERS = ("codex", "claude", "cursor", "grok")
-NORMALIZER_VERSION = "4/" + unicodedata.unidata_version
+NORMALIZER_VERSION = "5/" + unicodedata.unidata_version
 NAMESPACE = uuid.UUID("7875cdc8-1c78-4bc4-8345-51e66a8c26ef")
 COMPLETENESS = ("complete", "partial", "unavailable", "stale")
 CAPABILITY_NAMES = (
@@ -594,6 +594,77 @@ class TrashEntry:
     def __post_init__(self):
         if not re.fullmatch(r"t-[a-f0-9-]{36}", self.trash_id):
             raise ValueError("invalid trash identity")
+        for value in (self.session_uid, self.operation_id, self.source_profile):
+            _identifier(value)
+        if (
+            type(self.owner_uid) is not int
+            or self.owner_uid < 0
+            or type(self.manifest_version) is not int
+            or self.manifest_version != 1
+            or self.state not in OPERATION_STATES
+            or (self.conflict_reason is not None and not isinstance(self.conflict_reason, str))
+        ):
+            raise ValueError("invalid trash record")
+        _milliseconds(self.snapshot_verified_at, optional=True)
+        root = SourceRoot(**self.source_root)
+        validate_artifacts(self.artifacts, root.path)
+
+
+def validate_artifacts(artifacts, boundary=None):
+    """Validate the existing private inventory format before consuming paths/modes."""
+    if not isinstance(artifacts, list):
+        raise ValueError("invalid artifacts")
+    sources = set()
+    for artifact in artifacts:
+        source = artifact["source"]
+        _absolute_path(source)
+        path = Path(source)
+        if (
+            ".." in path.parts
+            or source in sources
+            or (boundary is not None and not path.is_relative_to(boundary))
+        ):
+            raise ValueError("invalid artifact scope")
+        sources.add(source)
+        records = artifact["inventory"]
+        validate_inventory(records)
+
+
+def validate_inventory(records):
+    if not isinstance(records, dict) or "." not in records or len(records) > 100000:
+        raise ValueError("invalid inventory")
+    for name, row in records.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or "\0" in name
+            or Path(name).is_absolute()
+            or ".." in Path(name).parts
+            or Path(name).as_posix() != name
+        ):
+            raise ValueError("invalid inventory path")
+        if (
+            row["kind"] not in ("file", "directory")
+            or type(row["mode"]) is not int
+            or not 0 <= row["mode"] <= 0o7777
+        ):
+            raise ValueError("invalid inventory mode")
+        stamp = row["stat"]
+        for key in ("dev", "inode", "size"):
+            counter(stamp[key])
+            if stamp[key] is None:
+                raise ValueError("missing artifact revision")
+        if type(stamp["mtime_ns"]) is not int:
+            raise ValueError("invalid artifact revision")
+        if row["kind"] == "file":
+            if (
+                type(row["size"]) is not int
+                or row["size"] != stamp["size"]
+                or not re.fullmatch(r"[a-f0-9]{64}", row["sha256"])
+            ):
+                raise ValueError("invalid artifact hash")
+        if name != "." and records.get(str(Path(name).parent), {}).get("kind") != "directory":
+            raise ValueError("invalid inventory ancestry")
 
 
 @dataclass
@@ -616,6 +687,8 @@ class OperationItem:
         _milliseconds(self.updated_at)
         if type(self.cleanup_pending) is not bool:
             raise ValueError("invalid cleanup progress")
+        if self.error is not None and not isinstance(self.error, str):
+            raise ValueError("invalid cleanup error")
         if self.trash_id is not None and not re.fullmatch(r"t-[a-f0-9-]{36}", self.trash_id):
             raise ValueError("invalid trash identity")
         if not isinstance(self.recovery_options, list) or any(

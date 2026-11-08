@@ -147,6 +147,7 @@ class TrashScreen(ModalScreen):
             yield Button("Close", id="cancel")
             yield Button("Restore (r)", id="restore")
             yield Button("Retry (x)", id="retry")
+            yield Button("New preview", id="new-preview")
             yield Button("Purge", id="purge", variant="error")
 
     def on_mount(self):
@@ -163,6 +164,31 @@ class TrashScreen(ModalScreen):
                 key=item.get("item_id") or item["trash_id"],
             )
         self.query_one("#cancel", Button).focus()
+        self.update_actions()
+
+    def on_data_table_row_highlighted(self):
+        self.update_actions()
+
+    def update_actions(self):
+        from textual.widgets import DataTable
+
+        table = self.query_one(DataTable)
+        key = (
+            str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
+            if table.row_count
+            else None
+        )
+        item = next(
+            (row for row in self.items if (row.get("item_id") or row["trash_id"]) == key), None
+        )
+        actions = item["available_actions"] if item else []
+        for button, action in (
+            ("restore", "restore"),
+            ("retry", "retry_same_confirmation"),
+            ("new-preview", "new_preview"),
+            ("purge", "purge"),
+        ):
+            self.query_one("#" + button, Button).disabled = action not in actions
 
     def action_cancel(self):
         self.dismiss(None)
@@ -171,7 +197,7 @@ class TrashScreen(ModalScreen):
         if event.button.id == "cancel":
             self.dismiss(None)
             return
-        self.selected_action(event.button.id)
+        self.selected_action("new_preview" if event.button.id == "new-preview" else event.button.id)
 
     def action_restore(self):
         self.selected_action("restore")
@@ -195,7 +221,10 @@ class TrashScreen(ModalScreen):
         if action not in item["available_actions"]:
             return
         self.dismiss(None)
-        self.on_action(action, [key])
+        if action == "new_preview":
+            self.on_action("trash", [item["session_id"]])
+        else:
+            self.on_action(action, [key])
 
 
 class DetailsScreen(ModalScreen):

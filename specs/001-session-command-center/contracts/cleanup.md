@@ -247,3 +247,31 @@ unchanged history/graph and trusted existing ancestors. Newly created native dir
 are allowed; replacement of previously proven common ancestors is not. Current references
 are validated and journaled for same-scope retry; unexpected rewrites remain conflicts.
 Reference evidence stores path, revision and existing ancestor stat identity, not bodies.
+
+## Phase 15 terminal staging and persisted records
+
+Nested entry/plan/progress data is validated before advertising actions or changing
+lifecycle state. IDs must match their rows and non-purged payloads their immutable
+manifest; malformed root/owner/version/state/artifact/inventory data gives a content-free
+catalog_record_invalid. Valid omitted optional defaults remain compatible. No repair or
+destructive fallback is performed after a validation failure.
+
+failed_no_change stays terminal for source deletion. An unused staging entry exposes
+new_preview/purge and is not labelled a recoverable conversation. New preview selects
+the original stable UID afresh and requires a new token/closed assertion. Existing
+confirmation replay remains idempotent, returning the previous failure without mutation.
+
+If a failed source operation reserved a manager directory before TrashEntry persistence,
+cleanup_pending retains its original owner and the operation stays visible. Same-operation
+retry completes only that reserved directory/manifest/entry, verifies existing contents
+against the original plan, and releases ownership. Unexpected contents remain preserved.
+It never reattempts native history deletion; the final state remains failed_no_change.
+
+Unused staging purge has its own explicit preview. Complete backup files must match the
+original inventory; a shorter file must match a prefix of its unchanged original artifact
+through an owner-checked no-follow read and pre/post revision checks. Missing/changed
+originals cannot prove such partial copies. Unknown topology or differing versions refuse
+purge. The private directory observation is checked again before publishing the preview.
+Its validated staging_inventory binds commit/retry to those exact private hashes; already
+removed items may be absent during retry, while new/changed items are retained. No automatic
+cleanup and no native writes occur. Present-session caches and newer trash ownership survive.

@@ -161,7 +161,6 @@ def native_snapshot(root, tid):
         },
         closed_snapshot=True,
     ) as reader:
-        reader.connection.execute("BEGIN")
         rows = {
             r["id"]: r
             for r in reader.read(
@@ -181,7 +180,6 @@ def native_snapshot(root, tid):
             "thread_realtime_items": {"thread_id", "item_id", "item_json", "rollout_ordinal"},
         }
         with NativeSQLite(history, tables, closed_snapshot=True) as contents:
-            contents.connection.execute("BEGIN")
             for member in order:
                 row = rows[member]
                 if (

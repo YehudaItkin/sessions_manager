@@ -71,3 +71,61 @@ def test_attach_and_virtual_tables_are_forbidden(tmp_path):
     with pytest.raises(Failure, match="unsupported_native_schema"):
         with NativeSQLite(path, {"items": {"id", "value"}}):
             pass
+
+
+def test_live_reader_pins_one_snapshot_across_commits(tmp_path):
+    path = tmp_path / "live.db"
+    writer = sqlite3.connect(path)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE items(id TEXT,value TEXT)")
+    writer.execute("INSERT INTO items VALUES ('one','before')")
+    writer.commit()
+    try:
+        with NativeSQLite(path, {"items": {"id", "value"}}) as reader:
+            assert reader.read("items", ["value"]) == [{"value": "before"}]
+            writer.execute("UPDATE items SET value='after'")
+            writer.commit()
+            committed = path.with_name(path.name + "-wal").read_bytes()
+            assert reader.read("items", ["value"]) == [{"value": "before"}]
+        assert path.with_name(path.name + "-wal").read_bytes() == committed
+        with NativeSQLite(path, {"items": {"id", "value"}}) as reader:
+            assert reader.read("items", ["value"]) == [{"value": "after"}]
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("replacement", ["main", "wal", "shm"])
+def test_reader_rejects_replaced_store_binding(tmp_path, replacement):
+    path = tmp_path / "live.db"
+    writer = sqlite3.connect(path)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE items(id TEXT)")
+    writer.execute("INSERT INTO items VALUES ('one')")
+    writer.commit()
+    try:
+        with pytest.raises(Failure, match="source_changed"):
+            with NativeSQLite(path, {"items": {"id"}}) as reader:
+                assert reader.read("items", ["id"]) == [{"id": "one"}]
+                selected = (
+                    path if replacement == "main" else path.with_name(path.name + "-" + replacement)
+                )
+                selected.rename(selected.with_name(selected.name + ".retained"))
+                selected.write_bytes(b"synthetic replacement")
+    finally:
+        writer.close()
+
+
+def test_busy_reader_exhausts_bounded_retry_without_native_write(monkeypatch):
+    class Busy:
+        calls = 0
+
+        def execute(self, *args):
+            self.calls += 1
+            raise sqlite3.OperationalError("synthetic busy")
+
+    reader = NativeSQLite(__import__("pathlib").Path("/synthetic/native.db"), {"items": {"id"}})
+    reader.connection = Busy()
+    monkeypatch.setattr("sessions_manager.sources.sqlite_reader.time.sleep", lambda _: None)
+    with pytest.raises(Failure, match="native_store_busy"):
+        reader.read("items", ["id"])
+    assert reader.connection.calls == 3

@@ -549,6 +549,24 @@ class Catalog:
             ),
         )
         chosen = best["session"]
+        if len(evidence) > 1:
+            # A representative location is not the owner of all native process
+            # evidence. Preserve fresh positive proof for the same identity/cwd.
+            active = sorted(
+                (
+                    e["session"]
+                    for e in evidence
+                    if e["stage"] == "complete"
+                    and e["cycle"] == cycle
+                    and e["session"].cwd == chosen.cwd
+                    and e["session"].activity == "active"
+                    and e["session"].activity_evidence.get("status") == "active"
+                    and e["session"].activity_evidence.get("confidence") == "verified"
+                ),
+                key=location_key,
+            )
+            chosen.activity = "active" if active else "unknown"
+            chosen.activity_evidence = dict(active[0].activity_evidence) if active else {}
         signatures = {
             location_key(e["session"]): e["session"].extra.get("identity_digest")
             if full(e) and e["cycle"] == cycle

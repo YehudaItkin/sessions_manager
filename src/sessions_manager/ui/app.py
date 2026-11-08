@@ -340,6 +340,8 @@ class SessionsApp(App):
         self.reload_rows()
 
     def cleanup_preview(self, action, ids):
+        import sqlite3
+
         if self.scanning:
             self.notify("Wait for refresh to finish before cleanup", severity="warning")
             return
@@ -354,8 +356,10 @@ class SessionsApp(App):
                 if action == "cleanup-retry"
                 else service.preview(action, ids)
             )
-        except Failure as failure:
-            self.push_screen(TextScreen(explain(failure.code)))
+        except (Failure, OSError, sqlite3.Error) as failure:
+            self.push_screen(
+                TextScreen(explain(failure.code if isinstance(failure, Failure) else "io_error"))
+            )
             return
 
         def confirmed(closed):
@@ -374,8 +378,12 @@ class SessionsApp(App):
                 self.push_screen(
                     TextScreen(json.dumps(human_data(result), ensure_ascii=False, indent=2))
                 )
-            except Failure as failure:
-                self.push_screen(TextScreen(explain(failure.code)))
+            except (Failure, OSError, sqlite3.Error) as failure:
+                self.push_screen(
+                    TextScreen(
+                        explain(failure.code if isinstance(failure, Failure) else "io_error")
+                    )
+                )
 
         self.push_screen(CleanupScreen(plan, confirmed))
 

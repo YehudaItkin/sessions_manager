@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import stat
 import time
 from pathlib import Path
 
@@ -14,6 +15,17 @@ class NativeSQLite:
         self.path, self.tables = Path(path), tables
         self.connection = None
         self.closed_snapshot, self._immutable_stamp = closed_snapshot, None
+        self._bindings = {}
+
+    @staticmethod
+    def _binding(path):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            raise Failure("source_changed", 5)
+        return info.st_dev, info.st_ino
 
     def __enter__(self):
         if not self.path.is_file() or self.path.is_symlink():
@@ -21,6 +33,7 @@ class NativeSQLite:
         with self.path.open("rb") as stream:
             header = stream.read(100)
         sidecars = [self.path.with_name(self.path.name + s) for s in ("-wal", "-shm")]
+        self._bindings = {p: self._binding(p) for p in [self.path, *sidecars]}
         if len(header) >= 20 and header[18] == 2 and not all(p.is_file() for p in sidecars):
             if not self.closed_snapshot or any(p.exists() or p.is_symlink() for p in sidecars):
                 raise Failure("wal_sidecars_unavailable", 3)
@@ -39,6 +52,9 @@ class NativeSQLite:
             self.connection.execute("PRAGMA trusted_schema=OFF")
             self.connection.execute("PRAGMA busy_timeout=100")
             self.connection.execute("PRAGMA mmap_size=1073741824")
+            # Pin schema, metadata and every graph/table SELECT to one native
+            # snapshot. Independent databases still have separate snapshots.
+            self.connection.execute("BEGIN")
             table_types = {
                 r[1]: r[2] for r in self.connection.execute("PRAGMA table_list") if r[0] == "main"
             }
@@ -85,6 +101,8 @@ class NativeSQLite:
     def __exit__(self, *args):
         if self.connection:
             self.connection.close()
+        if any(self._binding(path) != binding for path, binding in self._bindings.items()):
+            raise Failure("source_changed", 5)
         if self._immutable_stamp:
             from .base import fingerprint
 

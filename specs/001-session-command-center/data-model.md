@@ -393,3 +393,31 @@ Cursor context occupancy remains separate. Purge of the current lifecycle clears
 location payloads as well as ledger/context/parser/history data; an older entry cannot
 clear newer evidence. Normalizer 4 rebuilds old history/search/parser caches, retaining
 stable IDs, hidden state and journals.
+
+## Phase 15 validation and staging retention — 2026-11-08
+
+Normalizer 5 invalidates previously mixed SQLite history/search/parser caches without changing
+catalog schema 4. NativeSQLite readers pin one database snapshot and reject replaced file
+bindings. Cursor's stored fingerprint precedes the graph observation; subsequent commits
+require a later refresh rather than being attached to old cached content.
+
+TrashEntry validates nested SourceRoot, owner/IDs, manifest version 1, states, artifact scope,
+inventory ancestry/kinds/modes/stat/hashes and optional timestamps. Persisted IDs must match
+their row; non-purged payloads must match the immutable manifest. Existing omitted optional
+defaults remain valid. Ordered operation targets validate identity/root/provider/artifacts
+before lifecycle changes, listing, recovery preview or retry. Invalid private data returns
+catalog_record_invalid without its contents or automatic repair.
+
+OperationItem.cleanup_pending also represents incomplete manager registration of reserved
+staging for terminal failed_no_change. Its original lifecycle owner remains until retry
+completes the same entry; retry does not repeat source deletion. After registration, the
+item remains failed_no_change and exposes new_preview/purge, not a no-op retry. Such an entry
+has recoverable_copy=false. Known completed/partial source mutations retain their existing
+recovery semantics and purge cleanup_pending behavior.
+
+Only staging purge targets may carry optional staging_inventory, an ordinary validated
+inventory of the exact private entry observed at preview. It contains hashes/stat/modes,
+not file bodies. Partial backup files require matching prefixes of the unchanged original
+artifact before preview; unknown versions are preserved. Commit/retry matches the confirmed
+inventory (allowing only already removed items during recovery). Purging unused staging
+never clears a present session's history/search/usage or another trash generation.

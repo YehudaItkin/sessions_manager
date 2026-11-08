@@ -704,3 +704,97 @@ Release checks:
   No new runtime dependency/service/schema/native capability. Checklist remains read-only
   **16/16 PASS**; hooks file absent. Five code tasks complete; T167 and earlier independent
   native gates remain open. Documentation links/fences and source/artifact privacy reviewed.
+
+
+## Phase 15 convergence implementation — 2026-11-08
+
+T168–T170/T172 complete; T171 remains OPEN/FAILED-unverified. Original T001–T167
+text/markers and the reviewer-owned checklist are unchanged. Schema remains 4;
+normalizer 5 rebuilds prior history/search/parser caches with stable IDs/hidden/journals.
+
+Observed TDD and boundary evidence:
+- T168: **5 expected RED cases** showed mixed live SQLite reads, accepted main/WAL/SHM
+  replacement, and a Cursor question/answer pair that never existed in one committed
+  revision. The pinned read transaction, binding checks and pre-graph cache observation
+  fix these. Relevant SQLite/Cursor/Codex/archive/alias subset: **72 passed**. The busy
+  boundary retains exactly three attempts; closed-WAL and native read-only guards pass.
+- T169: **14 initial expected RED cases** exposed nested invalid entry/plan acceptance,
+  CLI/Pilot failure handling and owner/manifest/row mismatch. Two additional RED Pilot
+  cases reproduced manifest access failures after listing and before confirmation.
+  RED regressions also covered a missing progress field, a non-string error, and four
+  Restore/Purge plan scope mismatches before lifecycle changes. Nested records/ordered
+  targets now validate before consumption, including binding target UID/provider/profile/
+  artifacts to the actual entry. Valid legacy optional defaults still list and restore.
+  Relevant cleanup validation/recovery/CLI/Pilot/model subset: **75 passed** before later
+  scope cases; the final combined validation/staging/recovery subset: **77 passed**.
+- T170: **4 expected RED cases**, plus matching controls, reproduced lost positive
+  activity across copies/root publication order and a later stale registry record.
+  All matching ID/cwd locations retain evidence; publication carries current-cycle proof
+  independently of representative. Warm/metadata/full/IPC, CLI/Pilot active filters,
+  hidden/UID/selection, PID reuse and unavailable registry boundaries: **30 passed**.
+- T172: **8 initial expected RED cases** covered missing pre-entry staging recovery,
+  terminal no-op Retry, partial backup purge and absent New preview UI. Additional RED
+  cases covered private substitution during preview and enabled unavailable buttons.
+  Reserved manager registration uses cleanup_pending and same-operation retry without
+  retrying source deletion. Terminal no-change rows offer New preview/Purge; other
+  controls are disabled for the selected row, including at 80x24. Partial backups
+  require known topology and a matching prefix of the unchanged source; frozen private
+  inventory rejects changed/unknown versions before/during/after confirmation and across
+  restart. Native/neighbor bytes stay intact. Final cleanup/error Pilot subset: **13 passed**.
+
+Final release verification:
+- `uv run pytest -q --tb=short`: **591 passed, 10 skipped**, 133.59 s after all code changes.
+  Skips remain five explicit corpus gates, one native Codex opt-in, one blocked Warp
+  opt-in and three native resume opt-ins. Their separate results below are not replaced
+  by the default functional result. Ruff check/format: **PASS, 156 Python files**;
+  whitespace, Markdown links/fences and checklist/prefix checks pass.
+- Final standalone SC-002: **5 passed**, 13.62 s. Cold **7.696 s** (<=10); warm search/
+  navigation **1.066 s**, TUI first frame **1.282 s**, combined filter/sort **0.410 s**,
+  TUI sort **1.356 s** (each <=2). No concurrent test/build/native smoke during timing.
+  Reused seed-1 corpus: **10,000 sessions / 1,130,076,804 native bytes**, requested history
+  1,073,741,824 bytes. Fresh private manager catalog; OS caches not flushed, their exact
+  state uncontrolled. CPython **3.14.2**, SQLite **3.50.4**, macOS **27.0.1 arm64**,
+  Apple M3 Pro / **18 GiB**. Targets unchanged. Manager:
+  `/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-gcp5duwv`.
+  Provenance: {"schema":4,"minimum_start":1794123054769,"maximum_finish":1794123059955,
+  "root_as_of":{"codex":1794123057748,"claude":1794123057037,"grok":1794123059708,"cursor":1794123059955}}.
+- Wheel/sdist build and locked outside-checkout installed-wheel smoke: **PASS** on
+  Python **3.12.12 / SQLite 3.54.1**. Help/version/refresh/list/show/stats/resume dry-run,
+  hide/unhide, new failed-staging list/Purge and two regular trash/restore/purge cycles
+  pass on **40 synthetic sessions / 70 messages / 200 known tokens**. All original native
+  hashes match. Final installed environment: `sessions-phase15-installed-mpbhxo5o` in the
+  user temporary directory; receipt.json records the exact path and installed package.
+  Final wheel SHA-256: **53bf1c3774bb94b5a4e7e822cc9149bd97b91e1722c433df657349f3eb7764a2**.
+- Actual retained **Codex 0.166.0** disposable offline archive gate: **1 passed**, 2.80 s.
+  Installed Python 3.12 console also proved archive/unarchive, original descendant flags,
+  history/IDs/neighbor preservation and restart. Archive uses the shared pinned reader;
+  application code performs no native shared-DB DML. No Codex version/capability expansion.
+
+T171 independent native acceptance:
+- Explicit isolated Claude/Grok/Cursor opt-in plus containment suite: **3 FAILED,
+  7 passed**, 4.51 s. These three failures remain unverified, not passing SC-004.
+- Claude **2.1.299**: history_not_loaded; Cursor **2026.10.22-27dcf5f**: isolation_denied.
+  Both retain the original native IDs, no new sessions and neighbor hashes, but neither
+  proves the generated marker or live cwd. Claude startup cause remains unverified;
+  Cursor's fixed external temporary path remains outside the disposable write boundary.
+- Grok now fails native_gate_profile_unverified before fixture creation/resume. A separate
+  isolated version-only probe returned `grok 1.0.70 (f50904eaee6c)` without the required
+  recorded `[stable]` suffix. The exact profile check is retained; the earlier authentication
+  failure remains historical evidence, not today's observed startup result.
+- Network/keychain/personal stores/outside writes stay denied in the native resume harness;
+  no credentials, prompt/AI turn, personal-store fallback or relaxed isolation is supplied.
+  Parent HOME/environment remains unchanged. Warp T113/T130/T144/T154/T159 remains blocked
+  by the prior dev.warp.Warp-Stable access denial: no Warp launch or alternate UI/shell route.
+  T167/T171 remain open; conditional Codex cleanup T118 and unavailable Grok shared-index
+  cleanup remain unchanged. SC-003 owner usability timing is still separate/unperformed.
+
+Sole-maintainer self-review recorded: checked requirement/task/constitution traceability,
+observed RED-to-GREEN evidence, coherent per-database reads and explicit cross-file limits,
+source observation/cache migration, nested persisted scope before lifecycle ownership,
+manifest/neighbor/retention invariants, staging-prefix proof and exact purge retry, current
+activity evidence, unavailable controls, documentation/compatibility, package provenance,
+privacy and unchanged SC-002 thresholds. No new dependency/service/schema or production
+native capability. T001–T167 prefix SHA-256 remains
+c95baa9091de4fa17f5933037a20390bf72f42ce5739799f763d3f29cee75c98 (156,791 bytes);
+requirements checklist remains **16/16 PASS**, SHA-256
+ dd67a44fab70fe61e690581764c9f811a0abe15705e5702548ed68e96a5f167c.

@@ -110,3 +110,39 @@ async def test_tui_retry_exposes_operation_without_trash_copy(tmp_path, monkeypa
             await pilot.click("#confirm")
             await pilot.pause()
             assert not path.exists() and neighbor.exists()
+
+
+async def test_failed_no_change_tui_offers_new_preview_and_separate_staging_purge(tmp_path):
+    from sessions_manager.models import Failure
+    from sessions_manager.ui.app import SessionsApp
+    from sessions_manager.ui.screens import TrashScreen
+    from tests.support.cleanup_case import case
+
+    with case(tmp_path) as (service, root, uid, path, neighbor):
+        plan = service.preview("trash", [uid])
+
+        def fail(stage, target):
+            if stage == "before_copy":
+                raise Failure("insufficient_space", 6)
+
+        service.fault = fail
+        service.commit("trash", [uid], plan["confirmation_token"], assert_closed=True)
+        app = SessionsApp(service.config, service.catalog)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.press("t")
+            assert isinstance(app.screen, TrashScreen)
+            assert app.screen.query_one("#retry").disabled
+            assert app.screen.query_one("#restore").disabled
+            assert not app.screen.query_one("#new-preview").disabled
+            await pilot.click("#new-preview")
+            assert isinstance(app.screen, CleanupScreen)
+            assert app.screen.plan["action"] == "trash"
+            assert app.screen.plan["targets"][0]["target_id"] == uid
+            await pilot.press("escape")
+            await pilot.press("t")
+            await pilot.click("#purge")
+            assert app.screen.plan["action"] == "purge"
+            assert path.exists() and neighbor.exists()
+            await pilot.click("#confirm")
+            await pilot.pause()
+            assert path.exists() and neighbor.exists()
