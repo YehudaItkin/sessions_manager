@@ -1305,3 +1305,20 @@ Assessment: 2026-11-07. Findings F1–F5 assess the present code against spec.md
   После создания TrashEntry, но до source relocation, Failure (например insufficient_space) сохраняет item/entry failed_no_change и item.recovery_options=['new_preview']. Однако trash_list показывает retry_same_confirmation/inspect_trash, а commit считает failed_no_change терминальным и при retry возвращает тот же результат без повторной попытки. In-memory commit/list/retry probe подтвердил этот замкнутый путь с одним mutation attempt; пользователь не получает ожидаемого действия, а staging entry остаётся в корзине. Различать terminal no-source-change, незавершённую recoverable mutation и pending terminal-owner cleanup: показывать только выполнимые действия, объяснять новый preview исходной сессии и предоставлять подтверждённый ограниченный путь удаления принадлежащего менеджеру ненужного staging/backup, когда это безопасно. Не выдавать незавершённую копию за восстановимую историю, не делать generic unlock, автоматическую/возрастную очистку или widening прежнего scope. Сначала воспроизвести сбои до/после entry/manifest/backup и до первого rename, restart/retry/новый preview, mixed batch и отдельный terminal item с ещё pending owner. Проверить реальные CLI/Pilot действия, отсутствие бесконечного no-op Retry, сохранность native/соседей/неожиданных версий и прежние purge cleanup_pending/no-overwrite/идемпотентные гарантии.
 
 Phase 15 implementation status (2026-11-08): T168–T170 and T172 completed with observed RED-to-GREEN regressions, boundary/full/Ruff/package and unchanged SC-002 checks. T171 remains OPEN: the explicit isolated native run still failed for Claude/Grok/Cursor (Grok now refuses the exact version profile before resume); Warp remains externally blocked and was not accessed. No personal stores, credentials, remote model calls or unrestricted fallback were used. See validation.md for final evidence and known limitations. Original tasks/gates and conditional cleanup T118 remain unchanged.
+
+
+## Phase 16: TUI auto refresh and paged overview — 2026-11-11
+
+- [X] T173 [FR-029/030] Update spec/plan/tasks before behavior changes; record TDD evidence.
+- [X] T174 [FR-030] RED SQL page parity/revision/bounded decoding tests; implement query_page, UID position and matching selection without schema migration.
+- [X] T175 [FR-029] RED synthetic stat/clock/source retry/coalescing tests; implement single coordinator and no-content/no-follow observations.
+- [X] T176 [FR-030] RED Pilot scrolling/page/selection tests; implement 100/20 loading, totals, revision refresh, UID/scroll and off-page batch preservation.
+- [X] T177 [FR-029] RED Pilot automatic changes/errors/dialog/details/shutdown/action tests; wire default timer, toggle/F5, publication deferral and reader drain with original UID validation.
+- [ ] T178 [FR-029/030/SC-002] Full pytest/Ruff, synthetic SC-002, installed wheel smoke, docs/validation/self-review and GitHub PR. Existing native gates/T118 remain independent.
+
+Phase 16 status: T173–T177 implemented and verified by 57 focused tests with warnings
+as errors, Ruff/format and an installed Python 3.12 wheel smoke (240→243 synthetic
+sessions; original hashes preserved). T178 is OPEN: full run 636 PASS / 10 SKIP /
+9 cleanup-probe failures, and all five SC-002 timings failed; original HEAD also
+exceeds the warm budget on the same cache. Thresholds and native safety checks remain
+unchanged. Draft PR delivery and full evidence are recorded in validation.md.

@@ -143,6 +143,8 @@ async def test_failed_no_change_tui_offers_new_preview_and_separate_staging_purg
             await pilot.click("#purge")
             assert app.screen.plan["action"] == "purge"
             assert path.exists() and neighbor.exists()
+            app.screen.query_one("#confirm").scroll_visible(animate=False)
+            await pilot.pause()
             await pilot.click("#confirm")
             await pilot.pause()
             assert path.exists() and neighbor.exists()
