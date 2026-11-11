@@ -896,3 +896,6 @@ dependency, native format/schema, deletion policy, credential access or model ca
 Installed native hashes are unchanged. Existing native gates retain their independent
 status. **T178 remains OPEN** for a passing full suite/system probes and SC-002 on a
 validated host; delivery is a draft PR, with no claim that these gates passed.
+
+Draft delivery: [GitHub PR #13](https://github.com/YehudaItkin/sessions_manager/pull/13).
+T178 remains open; this PR does not claim a passing SC-002/full-suite gate.
