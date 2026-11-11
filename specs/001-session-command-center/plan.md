@@ -523,3 +523,37 @@ The existing inventory, lock, journal, no-replace and lifecycle mechanisms are r
 T171 remains an independent failed/unverified native acceptance gate; recorded Warp denial
 is unchanged and no alternate route is attempted. Full/Ruff/package, supported Codex archive
 and unchanged SC-002 gates plus documented self-review precede GitHub delivery.
+
+
+## Автообновление и pagination — 2026-11-11
+
+Constitution check до реализации: FR-029/030 задают scope, интервалы, lifecycle и
+приёмку; тесты сначала RED; private cache/native ownership и существующие mutation
+checks сохранены; документация/полный pytest/Ruff/installed wheel/SC-002/PR обязательны.
+
+Добавить SQL projection из существующего JSON payload и chunks/FTS без миграции.
+Общий compiler QuerySpec сохраняет Python casefold/date/unknown/tie semantics, read
+transaction связывает rows/count/revision. Отдельные запросы position и selected IDs
+не декодируют остальные Session. Глобальные handles используют существующую projection.
+TUI хранит загруженный диапазон страниц; page requests объединяются, revision mismatch
+перечитывает диапазон. При перемещении выбранного UID за границы загружается его страница,
+соседние страницы доступны в обе стороны; это сохраняет SC-002 без загрузки промежуточных
+тысяч строк. Filter change сбрасывает limit/offset и пересекает batch через SQL.
+
+Один TUI worker управляет stat observation и discovery, публикация выполняется только
+в event loop. stat worker использует fd-relative no-follow traversal, не читает bodies.
+Независимые source retries выдерживают 30s; следующий poll через 5s от завершения.
+Pending manual refresh объединяется. Automatic results ждут закрытия диалогов; details
+не перерисовываются. Перед action readers дожидаются, собранные результаты
+публикуются и проверяются исходные UID/observations. Shutdown делает то же без публикации.
+
+Новые зависимости, daemon, native DML, schema и расширения cleanup исключены. Один
+координатор проще отдельных watcher/scan pools с competing publications. Проверить
+synthetic boundary/Pilot и full suite, затем отдельно SC-002 и installed-wheel smoke.
+
+Post-implementation constitution check: FR-029/030 have RED-to-GREEN acceptance and
+boundary evidence; ownership, retention and native formats/schema are unchanged.
+README and validation.md describe the new behavior and actual check results. The
+implementation is reviewable; T178 remains open because system-probe/full-suite and
+SC-002 gates did not pass on this host, including an over-budget original-code control.
+No thresholds or safety probes were relaxed. Submit as draft for review.

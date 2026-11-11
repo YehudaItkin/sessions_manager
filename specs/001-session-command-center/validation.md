@@ -798,3 +798,104 @@ native capability. T001–T167 prefix SHA-256 remains
 c95baa9091de4fa17f5933037a20390bf72f42ce5739799f763d3f29cee75c98 (156,791 bytes);
 requirements checklist remains **16/16 PASS**, SHA-256
  dd67a44fab70fe61e690581764c9f811a0abe15705e5702548ed68e96a5f167c.
+
+
+## Phase 16 — TUI auto refresh and pages (2026-11-11)
+
+FR-029/030 and T173–T178 implement the approved 5s / 100 rows / 20-row threshold
+plan. Spec/plan/tasks were updated before application changes. No dependencies,
+native formats or catalog schema migration were introduced (schema remains 4).
+
+Observed TDD evidence:
+- Catalog pages: 34 expected failures (missing query_page), then 34 PASS. Tests
+  compare every sort/direction and combined Unicode/search/date/scope selection
+  against QuerySpec.filter, verify bounded decoding, global selection, offsets and
+  local/external writer revisions.
+- Watch/schedule: expected import failure before watch.py, then 4 PASS using
+  injected clocks, synthetic stat changes and a nested-link boundary.
+- Pilot: initial expected 2 failures / 4 missing-schedule errors before wiring;
+  automatic creation/modification/removal, toggle/F5, source error/retry, aliases,
+  provider-only scan scope, deferred dialogs/details and original action UID covered.
+- Additional observed RED regressions: late dialog changes were lost after a stamp
+  advanced before publication; stale queued pages survived filter changes; a vanished
+  anchor page left an empty table despite surviving rows; selected UID relocation
+  decoded intervening pages; pending scans started after Quit. Each gained a regression
+  test and implementation fix. Both normal and cancelled readers/stat workers are
+  joined on shutdown. Batch confirmation retains original off-page IDs.
+
+Validation notes: the first sandboxed full run had 635 PASS, 10 SKIP and 8 FAIL;
+failures included denied sandbox-exec, unavailable system probes and modal test
+issues. A retained original-app probe reproduced the existing 80x24 staging-purge
+confirmation button outside the visible viewport. Its Pilot test now scrolls the
+button into view before clicking. An actual regression in the new handler treating
+archive/trash DataTable events as SessionTable events was corrected with a type guard.
+Final full-suite, package and SC-002 results are recorded below after completion.
+
+Native gates T113/T118/T130/T144/T154/T159/T167/T171 retain their prior independent
+status. This change does not run personal stores, Warp, credentials or model calls,
+and does not broaden native cleanup/resume/archive capability.
+
+Further TDD: a session history-reader failure originally reported complete and never
+retried without another stat change; RED regression now preserves old events, shows
+incompleteness and retries after 30s. An expired retry for a source excluded by the
+current filter originally produced next_poll in the past; RED clock regression now
+retains that source's retry while polling the selected sources at the normal interval.
+Scheduled work is passed as an async callable so cancellation before execution does
+not leave an unawaited coroutine. Catalog-only Pilot fixtures use controlled clocks.
+Scroll messages bind the loaded row count, coalescing stale events across page loads.
+
+The elevated full run completed with **636 passed, 10 skipped, 9 failed** (1110.79s).
+All nine failures were in existing cleanup/version/handle-probe paths, including explicit
+handle_probe_unavailable and no-change operations that left native files in place.
+No safety checks or timeouts were relaxed. The run preceded the final callable-worker
+cleanup; its unawaited-coroutine warning is covered by the subsequent warnings-as-errors
+focused suite. Quiet isolated retries and final performance/package results follow.
+
+Installed wheel verification: **PASS**, Python **3.12.12 / SQLite 3.54.1**, fresh
+locked non-editable environment outside the checkout. CLI help/version/refresh/list/
+show/stats/resume dry-run/hide/unhide pass on **240 synthetic sessions**, **420 messages**,
+**1,200 known tokens**. Installed TUI starts with 100 rows, loads a second page,
+detects additions through 243 sessions, defers publication under details, and honors
+the toggle/F5. Original native-file hashes remain unchanged. Receipt:
+`/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-phase16-installed-dddkuqo0/receipt.json`.
+Wheel SHA-256: **4da68ed6b1b519f299a207d160391fa0defce184e0bda1cac826921dfc9b63d1**.
+
+SC-002 was run without concurrent project tests/build/smoke on a freshly generated
+seed-1 corpus: **10,000 mixed sessions**, requested **1,073,741,824 bytes**, actual
+**1,129,935,632 native bytes**. Command:
+`.venv/bin/python -m pytest tests/performance --corpus /private/tmp/sessions-phase16-corpus -q -s --tb=short`.
+**5 FAILED**: cold **145.135s** (<=10 required), warm search/navigation **17.560s**,
+combined filters **9.166s**, TUI sort **4.784s** (each <=2 required); the first TUI frame
+did not contain a synthetic row within the existing 5s observation window. Targets
+and assertions were not relaxed. Warm manager catalog:
+`/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-6q1khujo`.
+The old retained corpus was incomplete and was not used for these measurements.
+Observed host swap afterward: **12,541MiB used / 13,312MiB total**. This is environment
+context, not proof of causation or a passing budget. SC-002 remains an OPEN delivery gate.
+
+Final focused run (after all fixes):
+`.venv/bin/python -m pytest tests/acceptance/test_live_overview.py tests/integration/test_catalog_pages.py tests/unit/test_watch.py -q -W error --tb=short`
+— **57 passed**, **67.49s**, no warnings. Ruff check, formatting of **160** Python
+files, compileall and git diff --check pass. Final wheel/sdist build passes.
+A separate quiet retry still reproduced handle_probe_unavailable in the existing
+staging-purge setup (1 failed / 1 passed); no cleanup probe or safety bound was changed.
+
+Quiet baseline comparison: exported original HEAD **a36f80d** src into an isolated
+temporary tree and selected it via child-only PYTHONPATH, using the same 10,000-row
+cached catalog and identical list/search + show + short-search subprocess sequence.
+With no concurrent project test/build/smoke, original code took **17.711s**, current
+code **11.327s**; both exceed <=2s. This demonstrates an unmet baseline budget on this
+host too, not proof that the new feature meets SC-002. The limits remain unchanged.
+
+Sole-maintainer self-review: checked FR-029/030 and T173–T178 traceability; parameterized
+SQL, Unicode/date/scope/sort parity, global handles, bounded page decoding, revision
+refresh and vanished-anchor fallback; coalesced page/refresh requests; original UID
+and confirmation scope; no-follow stat reads, cache retention, independent retries,
+dialog deferral and actual reader joins including pre-start cancellation. No new
+dependency, native format/schema, deletion policy, credential access or model call.
+Installed native hashes are unchanged. Existing native gates retain their independent
+status. **T178 remains OPEN** for a passing full suite/system probes and SC-002 on a
+validated host; delivery is a draft PR, with no claim that these gates passed.
+
+Draft delivery: [GitHub PR #13](https://github.com/YehudaItkin/sessions_manager/pull/13).
+T178 remains open; this PR does not claim a passing SC-002/full-suite gate.

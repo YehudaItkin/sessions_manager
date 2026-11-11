@@ -12,6 +12,7 @@ import uuid
 import zlib
 from collections import Counter
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ensure_private
@@ -84,6 +85,13 @@ CREATE TABLE IF NOT EXISTS locations(
 CREATE TABLE IF NOT EXISTS generations(
  id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(root_id), complete INTEGER, as_of INTEGER);
 """
+
+
+@dataclass(frozen=True)
+class QueryPage:
+    rows: list[Session]
+    total: int
+    revision: tuple[int, int]
 
 
 class Catalog:
@@ -692,6 +700,114 @@ class Catalog:
             raise Failure("catalog_record_invalid", 6) from None
         return short_handles(identities)
 
+    def _selection_sql(self, spec):
+        """Compile the existing literal query rules against the stored projection."""
+        from .search import _SORT_ATTRIBUTES, parse_date
+
+        # Validate before touching records, using the same public query contract.
+        spec.filter([])
+        field, order = spec.sorting()
+
+        def value(attribute):
+            return f"json_extract(payload,'$.{attribute}')"
+
+        clauses = [
+            "presence IN ('present','source_unavailable')",
+            "COALESCE(json_extract(payload,'$.extra.archived'),0)=0",
+        ]
+        parameters = []
+        if spec.providers:
+            clauses.append(f"{value('provider')} IN (SELECT value FROM json_each(?))")
+            parameters.append(json.dumps(spec.providers))
+        for attribute, needle in (("cwd", spec.project), ("model", spec.model)):
+            if needle:
+                clauses.append(f"instr(casefold({value(attribute)}),?)>0")
+                parameters.append(needle.casefold())
+        if spec.activity:
+            clauses.append(f"{value('activity')}=?")
+            parameters.append(spec.activity)
+        if spec.scope != "all":
+            clauses.append("hidden=?")
+            parameters.append(int(spec.scope == "hidden"))
+        for bound, operator in (
+            (parse_date(spec.since), ">="),
+            (parse_date(spec.until, end=True), "<="),
+        ):
+            if bound is not None:
+                clauses.extend(
+                    [
+                        f"{value('last_activity_at')}{operator}?",
+                        "COALESCE(json_extract(payload,'$.extra.date_provenance.last_activity_at.confidence'),json_extract(payload,'$.timezone_confidence'),'known')='known'",
+                    ]
+                )
+                parameters.append(bound)
+        if spec.query:
+            sql, args = self._matching_sql(spec.query)
+            clauses.append(f"uid IN ({sql})")
+            parameters.extend(args)
+        key = value(_SORT_ATTRIBUTES[field])
+        if field == "title":
+            key = f"COALESCE(NULLIF({value('title')},''),{value('preview')})"
+        if field not in ("created", "updated", "size"):
+            key = f"NULLIF(casefold({key}),'')"
+        if field == "activity":
+            key = f"NULLIF({key},'unknown')"
+        selection = f"SELECT uid,payload,hidden,presence,{key} AS sort_value FROM sessions WHERE "
+        selection += " AND ".join(clauses)
+        ordering = f"sort_value IS NULL,sort_value {order},uid ASC"
+        return selection, ordering, parameters
+
+    @contextmanager
+    def _query_snapshot(self):
+        # A savepoint also works inside an existing manager transaction. It pins
+        # count, rows and revision against writes by other manager processes.
+        with self._lock:
+            self.connection.execute("SAVEPOINT query_page")
+            try:
+                yield (
+                    self.connection.execute("PRAGMA data_version").fetchone()[0],
+                    self.connection.total_changes,
+                )
+            finally:
+                self.connection.execute("RELEASE query_page")
+
+    def query_page(self, spec, limit=100, offset=0):
+        if not isinstance(limit, int) or not isinstance(offset, int) or limit < 0 or offset < 0:
+            raise Failure("invalid_query", 2)
+        selection, ordering, args = self._selection_sql(spec)
+        with self._query_snapshot() as revision:
+            total = self.connection.execute(f"SELECT count(*) FROM ({selection})", args).fetchone()[
+                0
+            ]
+            rows = []
+            for row in self.connection.execute(
+                f"{selection} ORDER BY {ordering} LIMIT ? OFFSET ?", [*args, limit, offset]
+            ):
+                session = session_payload(row["payload"])
+                session.hidden, session.presence = bool(row["hidden"]), row["presence"]
+                rows.append(session)
+            return QueryPage(rows, total, revision)
+
+    def query_position(self, spec, uid):
+        selection, ordering, args = self._selection_sql(spec)
+        row = self.connection.execute(
+            f"SELECT position FROM (SELECT uid,row_number() OVER (ORDER BY {ordering})-1 AS position FROM ({selection})) WHERE uid=?",
+            [*args, uid],
+        ).fetchone()
+        return row[0] if row else None
+
+    def matching_selection(self, spec, ids):
+        if not ids:
+            return set()
+        selection, _, args = self._selection_sql(spec)
+        return {
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT uid FROM ({selection}) WHERE uid IN (SELECT value FROM json_each(?))",
+                [*args, json.dumps(sorted(ids))],
+            )
+        }
+
     def get(self, selector):
         prefix = selector[2:] if selector.startswith("s-") else selector
         rows = self.connection.execute(
@@ -902,25 +1018,28 @@ class Catalog:
         return None
 
     def matching_ids(self, query):
-        folded = query.casefold()
-        if not folded:
+        if not query:
             return {s.session_uid for s in self.sessions()}
+        sql, args = self._matching_sql(query)
+        return {r[0] for r in self.connection.execute(sql, args)}
+
+    @staticmethod
+    def _matching_sql(query):
+        folded = query.casefold()
         if "\0" in folded:
-            rows = self.connection.execute(
-                "SELECT DISTINCT uid FROM chunks WHERE instr(unpack(folded_text),?)>0", (folded,)
+            return (
+                "SELECT DISTINCT uid FROM chunks WHERE instr(unpack(folded_text),?)>0",
+                (folded,),
             )
         elif len(folded) < 3:
-            rows = self.connection.execute(
-                "SELECT DISTINCT uid FROM chunks WHERE instr(candidate_text,?)>0", (folded,)
-            )
+            return ("SELECT DISTINCT uid FROM chunks WHERE instr(candidate_text,?)>0", (folded,))
         else:
             grams = list(dict.fromkeys(folded[i : i + 3] for i in range(len(folded) - 2)))[:64]
             term = " AND ".join('"' + g.replace('"', '""') + '"' for g in grams)
-            rows = self.connection.execute(
+            return (
                 "SELECT DISTINCT c.uid FROM search_fts f JOIN chunks c ON c.id=f.rowid WHERE search_fts MATCH ? AND instr(unpack(c.folded_text),?)>0 UNION SELECT DISTINCT uid FROM chunks WHERE field_kind IN ('title','preview','cwd','native_id','display_id') AND instr(unpack(folded_text),?)>0",
                 (term, folded, folded),
             )
-        return {r[0] for r in rows}
 
     def _add_chunk(self, db, uid, kind, text, original_blob=None):
         from .search import prepare_chunk
