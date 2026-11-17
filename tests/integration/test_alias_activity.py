@@ -81,11 +81,12 @@ def test_alias_activity_survives_publication_warm_cache_and_transport(
             assert session.session_uid == uid
         import sessions_manager.cli as cli
 
-        monkeypatch.setattr(cli, "runtime", lambda *args, **kwargs: (cfg, catalog))
-        monkeypatch.setattr(catalog, "close", lambda: None)
-        response = CliRunner().invoke(
-            app, ["--format", "json", "list", "--scope", "all", "--activity", "active"]
-        )
+        with monkeypatch.context() as invocation:
+            invocation.setattr(cli, "runtime", lambda *args, **kwargs: (cfg, catalog))
+            invocation.setattr(catalog, "close", lambda: None)
+            response = CliRunner().invoke(
+                app, ["--format", "json", "list", "--scope", "all", "--activity", "active"]
+            )
         assert response.exit_code == 0, response.output
         assert json.loads(response.stdout)["data"]["items"][0]["session_uid"] == uid
         from sessions_manager.ui.app import SessionsApp

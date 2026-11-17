@@ -373,11 +373,11 @@ async def test_cancelled_stat_worker_is_joined(live, monkeypatch):
     app, _, _, _, now = live
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
 
-    def blocked(roots):
+    def blocked(roots, cancel=None):
         entered.set()
         release.wait(5)
         try:
-            return observe_roots(roots)
+            return observe_roots(roots, cancel=cancel)
         finally:
             finished.set()
 
@@ -397,6 +397,48 @@ async def test_cancelled_stat_worker_is_joined(live, monkeypatch):
             release.set()
             await app.action_quit()
             assert finished.is_set() and not app.scanning
+        finally:
+            release.set()
+
+
+async def test_scan_cache_load_runs_off_ui_thread_and_quit_stops_before_native_read(
+    live, monkeypatch
+):
+    import asyncio
+
+    from sessions_manager.sources.claude import Adapter
+
+    app, catalog, _, _, _ = live
+    entered, release = threading.Event(), threading.Event()
+    owner = threading.get_ident()
+    native_reads = []
+    original = Adapter.discover
+
+    def cache(roots, cancel=None):
+        assert threading.get_ident() != owner
+        entered.set()
+        release.wait(3)
+        return {}
+
+    monkeypatch.setattr(catalog, "scan_cache", cache, raising=False)
+    monkeypatch.setattr(
+        Adapter, "discover", lambda self: (native_reads.append(True), original(self))[1]
+    )
+    async with app.run_test() as pilot:
+        app.action_refresh()
+        try:
+            for _ in range(50):
+                if entered.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert entered.is_set(), "full scan cache was not loaded in a background reader"
+            assert app.query_one("#sessions").row_count == 1
+            quit_task = asyncio.create_task(app.action_quit())
+            await asyncio.sleep(0)
+            assert not quit_task.done()
+            release.set()
+            await asyncio.wait_for(quit_task, 2)
+            assert native_reads == []
         finally:
             release.set()
 

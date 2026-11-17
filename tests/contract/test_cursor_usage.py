@@ -1,3 +1,5 @@
+from contextlib import closing
+
 import pytest
 
 from sessions_manager.models import SourceRoot
@@ -38,7 +40,7 @@ def test_malformed_or_unknown_context_never_becomes_lifetime_zero(tmp_path, deta
     from tests.support.cursor_factory import wire
 
     path = make(tmp_path)
-    with sqlite3.connect(path / "store.db") as db:
+    with closing(sqlite3.connect(path / "store.db")) as db, db:
         db.execute("UPDATE blobs SET data=? WHERE id='root'", (wire(8, "turn") + wire(5, details),))
     adapter = Adapter(SourceRoot.create("cursor", tmp_path))
     usage = adapter.read_usage(adapter.discover().sessions[0])

@@ -936,3 +936,80 @@ first-frame test. The full-suite/cleanup failures from the prior run are not cur
 failures. Installed-wheel evidence from 2026-11-11 remains historical and was not
 repeated in this recheck. PR #13 remains a draft. Existing native opt-in gates were
 not run and retain their independent status. No claim of a passing SC-002 is made.
+
+
+## T178 completion — 2026-11-17
+
+T178 is now **COMPLETE**. The earlier recheck failures above are historical. The
+implementation keeps the original <=10s discovery / <=2s cached-navigation budgets,
+early metadata publication, stable IDs, schema **4**, native formats and safety gates.
+
+Measured changes and TDD:
+- The original cached CLI decoded 61/64 records even when displaying three. Four RED
+  contract cases and five missing-API cases now pass: SQL pagination restores only the
+  page (plus displayed match context), while SQL aggregate completeness still covers
+  metadata-filtered candidates before literal search or pagination. Page/count/coverage/
+  handles/source states share a read snapshot. Incomplete off-page/non-matching records
+  still produce partial search and exit 3; no false completeness was introduced.
+- Profiling found the metadata substring branch traversing chunks_session in UID order
+  with repeated table seeks. Identical-result diagnostic: 0.821s versus 0.032s for a
+  sequential scan. Exact instr/casefold verification and conversation FTS remain in
+  place; no index, table, column, dependency or stored format was added.
+- Generic public serialization fast-paths exact scalar types and caches only bounded
+  declared field-name/type metadata, not Session values or transcript bodies. Nested
+  output isolation, declared-field privacy and dataclass subclasses retain their shape.
+- Newly inserted unique sessions now carry their generation on the first INSERT and
+  avoid rewriting the identical payload. Existing rows, aliases, lifecycle guards and
+  early metadata generations keep their reconciled updates. The first changed-code
+  cold gate remained RED at 10.477s; the publication change brought it within budget.
+- RED watcher/background-cache tests now pass. The TUI reads scan-cache projections in
+  a worker through an independent read-only SQLite connection, with the event loop
+  retaining all writes. Cancellation stops stat walking between entries, discards the
+  entire cancelled observation (including missing-root races), joins readers and cannot
+  start native discovery after Quit. No underlying safety probe was skipped.
+
+Strict full-suite validation initially exposed pre-existing test SQLite resource leaks:
+connection transaction contexts did not close connections, and two CLI test doubles
+kept catalog.close mocked past the owning context. A tracemalloc allocation trace pointed
+to the old test_cursor_alias_locations copy helper. Fixed 37 such contexts with explicit
+closing while retaining their transaction contexts, and scoped the two close mocks.
+Assertions, native profiles, opt-ins and safety checks were not weakened or removed.
+
+Final checks on the completed implementation:
+- `.venv/bin/python -m pytest -q -W error --tb=short`: **662 passed, 10 skipped**,
+  **125.11s**, no warnings. Five skipped performance cases are verified explicitly below;
+  the other five are existing independent native opt-in gates.
+- `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .` (**161 Python files**),
+  `compileall` and `git diff --check`: **PASS**.
+- Final isolated SC-002: **5 passed**, **12.13s**. Cold discovery **9.306s** (<=10),
+  warm search/navigation **0.902s**, first meaningful TUI frame/normal exit **0.471s**,
+  combined filters **0.354s**, TUI header sort **0.326s** (each <=2).
+  The preceding isolated run also passed all five: 8.048 / 0.708 / 0.450 / 0.337 / 0.337s.
+  No project test/build/smoke ran concurrently with either timed run. Native OS caches
+  were not flushed and their exact state was uncontrolled; each manager catalog was new.
+- Same seed-1 synthetic corpus: **10,000 sessions**, 2,500 per provider, requested
+  **1,073,741,824 history bytes**, actual **1,130,785,488 native bytes**. No personal
+  histories or credentials were used. Final manager:
+  `/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-rlkjz_6p`.
+- Fresh locked, non-editable wheel outside the import checkout: **PASS**, Python
+  **3.12.12 / SQLite 3.54.1**. CLI help/version/refresh/paged list/literal search/show/
+  stats/resume dry-run/hide/unhide plus installed TUI pages, auto additions, details
+  deferral, toggle and F5 pass on **240→243 synthetic sessions** (420 original messages /
+  1,200 known tokens). Original native hashes remain unchanged. Wheel/sdist archive
+  checks exclude test/corpus/catalog artifacts. Wheel SHA-256:
+  **0c13e8f5ee332f25294449e475cb0ab0efe7f77a59b674e30d39bda581e38259**.
+
+Reproduction artifacts (Git-ignored): `.corpus/t178-opt-20261117-yt5ey15d/` contains
+profiles, RED/iteration diagnostics, full-final-3.log/xml, performance-final.log/xml,
+installed-receipt.json, final-summary.json and the installed-package smoke scripts.
+The generated performance fixture remains at `.corpus/t178-20261117-um7euxyt/corpus`.
+
+Sole-maintainer self-review: checked FR-029/030/SC-002 and T178.1–T178.4 traceability;
+SQL parameter binding, full-candidate completeness, literal Unicode/date/scope/order
+parity, snapshots and global handles; same-field serialization/privacy, unique-insert
+and alias/lifecycle/early-publication invariants; read-only cache ownership, cancellable
+no-follow observations, actual joins and original action identities; packaging and
+all measured limits. No new daemon, source format/schema, deletion policy, native DML,
+credentials or model calls. Source/ABI budgets and independent native gates remain
+unchanged. PR #13 can proceed to review; this completion does not close T118 or other
+independent native acceptance tasks.

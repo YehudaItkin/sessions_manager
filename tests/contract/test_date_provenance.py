@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 from typer.testing import CliRunner
@@ -35,7 +36,7 @@ def dated_root(tmp_path, provider, kind):
             row["timestamp"] = raw if index == 0 else end
         path.write_text("".join(json.dumps(r) + "\n" for r in rows))
     elif provider == "codex":
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET created_at=NULL,updated_at=NULL,created_at_ms=?,updated_at_ms=?",
                 (raw, end),
@@ -50,7 +51,7 @@ def dated_root(tmp_path, provider, kind):
         row = json.loads(file.read_text())
         row.update(createdAtMs=raw, updatedAtMs=end)
         file.write_text(json.dumps(row))
-        with sqlite3.connect(path / "store.db") as db:
+        with closing(sqlite3.connect(path / "store.db")) as db, db:
             meta = json.loads(
                 bytes.fromhex(db.execute("SELECT value FROM meta WHERE key='0'").fetchone()[0])
             )

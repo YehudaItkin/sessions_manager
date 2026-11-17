@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -8,7 +9,7 @@ from sessions_manager.sources.sqlite_reader import NativeSQLite
 
 def test_read_only_and_no_repair(tmp_path):
     path = tmp_path / "native.db"
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute("CREATE TABLE items(id TEXT, value TEXT)")
         db.execute("INSERT INTO items VALUES (?,?)", ("one", "hello"))
         db.execute("CREATE VIEW dangerous AS SELECT * FROM items")

@@ -354,6 +354,7 @@ class Catalog:
                 # Store per-location native evidence before applying aggregate guards.
                 # INSERT session first satisfies the existing location foreign key.
                 if not previous:
+                    session.current_generation = generation
                     db.execute(
                         "INSERT OR IGNORE INTO sessions(uid,namespace,native_id,payload,hidden,presence) VALUES (?,?,?,?,?,?)",
                         (
@@ -387,7 +388,10 @@ class Catalog:
                         and not session.extra.get("identity_conflict")
                     ):
                         session.presence = previous["presence"]
-                self._save_session(db, session)
+                # A new unique location already inserted this exact projection.
+                # Aliases and existing rows still need the reconciled update.
+                if previous or needs_alias:
+                    self._save_session(db, session)
                 if session.root_id != incoming_root:
                     continue  # Late metadata must not replace the selected copy's history.
                 if session.extra.get("identity_conflict") == "identity_conflict":
@@ -700,6 +704,25 @@ class Catalog:
             raise Failure("catalog_record_invalid", 6) from None
         return short_handles(identities)
 
+    def scan_cache(self, roots, cancel=None):
+        """Load only the selected roots through a reader owned by the calling thread."""
+        if cancel is not None and cancel.is_set():
+            return None
+        cached = {}
+        with self.reader() as db:
+            db.execute("BEGIN")
+            rows = db.execute(
+                "SELECT payload,hidden,presence FROM sessions WHERE json_extract(payload,'$.root_id') IN (SELECT value FROM json_each(?))",
+                (json.dumps([root.root_id for root in roots]),),
+            )
+            for row in rows:
+                if cancel is not None and cancel.is_set():
+                    return None
+                session = session_payload(row["payload"])
+                session.hidden, session.presence = bool(row["hidden"]), row["presence"]
+                cached[session.session_uid] = session
+        return cached
+
     def _selection_sql(self, spec):
         """Compile the existing literal query rules against the stored projection."""
         from .search import _SORT_ATTRIBUTES, parse_date
@@ -795,6 +818,21 @@ class Catalog:
             [*args, uid],
         ).fetchone()
         return row[0] if row else None
+
+    def query_completeness(self, spec):
+        """Coverage of metadata-filtered candidates, including unloaded search misses."""
+        from dataclasses import replace
+
+        selection, _, args = self._selection_sql(replace(spec, query=None))
+        phases = ("history", "search", "usage")
+        expressions = ",".join(
+            f"COALESCE(MAX(json_extract(payload,'$.{phase}_state') IS NOT 'complete'),0)"
+            for phase in phases
+        )
+        row = self.connection.execute(f"SELECT {expressions} FROM ({selection})", args).fetchone()
+        return {
+            phase: "partial" if row[index] else "complete" for index, phase in enumerate(phases)
+        }
 
     def matching_selection(self, spec, ids):
         if not ids:
@@ -1028,16 +1066,19 @@ class Catalog:
         folded = query.casefold()
         if "\0" in folded:
             return (
-                "SELECT DISTINCT uid FROM chunks WHERE instr(unpack(folded_text),?)>0",
+                "SELECT DISTINCT uid FROM chunks NOT INDEXED WHERE instr(unpack(folded_text),?)>0",
                 (folded,),
             )
         elif len(folded) < 3:
-            return ("SELECT DISTINCT uid FROM chunks WHERE instr(candidate_text,?)>0", (folded,))
+            return (
+                "SELECT DISTINCT uid FROM chunks NOT INDEXED WHERE instr(candidate_text,?)>0",
+                (folded,),
+            )
         else:
             grams = list(dict.fromkeys(folded[i : i + 3] for i in range(len(folded) - 2)))[:64]
             term = " AND ".join('"' + g.replace('"', '""') + '"' for g in grams)
             return (
-                "SELECT DISTINCT c.uid FROM search_fts f JOIN chunks c ON c.id=f.rowid WHERE search_fts MATCH ? AND instr(unpack(c.folded_text),?)>0 UNION SELECT DISTINCT uid FROM chunks WHERE field_kind IN ('title','preview','cwd','native_id','display_id') AND instr(unpack(folded_text),?)>0",
+                "SELECT DISTINCT c.uid FROM search_fts f JOIN chunks c ON c.id=f.rowid WHERE search_fts MATCH ? AND instr(unpack(c.folded_text),?)>0 UNION SELECT DISTINCT uid FROM chunks NOT INDEXED WHERE field_kind IN ('title','preview','cwd','native_id','display_id') AND instr(unpack(folded_text),?)>0",
                 (term, folded, folded),
             )
 

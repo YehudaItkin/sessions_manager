@@ -1,3 +1,5 @@
+from contextlib import closing
+
 from sessions_manager.models import SourceRoot
 from sessions_manager.sources.codex import Adapter
 from tests.support.codex_factory import make
@@ -20,7 +22,7 @@ def test_verified_paginated_history_is_resumable_without_rollout(tmp_path):
     from tests.support.cleanup_case import version_cli
 
     make(tmp_path, rollout=False)
-    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT")
         db.execute("UPDATE threads SET history_mode='paginated'")
     root = SourceRoot.create(
@@ -40,7 +42,7 @@ def test_future_history_mode_is_not_assumed_resumable(tmp_path):
     from tests.support.cleanup_case import version_cli
 
     make(tmp_path, rollout=False)
-    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT")
         db.execute("UPDATE threads SET history_mode='future'")
     root = SourceRoot.create(
@@ -58,10 +60,10 @@ def test_paginated_catalog_without_persisted_history_is_not_resume_proof(tmp_pat
     from tests.support.cleanup_case import version_cli
 
     make(tmp_path, rollout=False)
-    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT")
         db.execute("UPDATE threads SET history_mode='paginated'")
-    with sqlite3.connect(tmp_path / "thread_history_1.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "thread_history_1.sqlite")) as db, db:
         db.execute("DELETE FROM thread_items")
     root = SourceRoot.create(
         "codex",
@@ -79,7 +81,7 @@ def test_native_archive_metadata_is_independent_of_hidden_and_presence(tmp_path)
 
     make(tmp_path, "active")
     make(tmp_path, "archived")
-    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         db.execute("UPDATE threads SET archived=1 WHERE id='archived'")
     sessions = {
@@ -111,7 +113,7 @@ def test_malformed_archive_flag_does_not_hide_healthy_neighbor(tmp_path):
 
     make(tmp_path, "healthy")
     make(tmp_path, "bad")
-    with sqlite3.connect(tmp_path / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         db.execute("UPDATE threads SET archived='invalid' WHERE id='bad'")
     result = Adapter(SourceRoot.create("codex", tmp_path)).discover()

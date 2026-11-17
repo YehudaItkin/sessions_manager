@@ -76,3 +76,59 @@ def test_excluded_failed_provider_does_not_spin_on_expired_deadline():
     schedule.finished({})
     assert schedule.next_poll == 45
     assert schedule.retry_at["claude"] == 30
+
+
+def test_observation_cancel_stops_between_entries_and_discards_snapshot(tmp_path, monkeypatch):
+    import threading
+
+    import sessions_manager.watch as module
+
+    root = SourceRoot.create("claude", tmp_path / "native")
+    root.path.mkdir()
+    for name in ("one", "two", "three"):
+        (root.path / name).write_text("synthetic")
+    cancel = threading.Event()
+    original = module.os.scandir
+    visited = []
+
+    class Entry:
+        def __init__(self, entry):
+            self.entry, self.name = entry, entry.name
+
+        def stat(self, **kwargs):
+            visited.append(self.name)
+            cancel.set()
+            return self.entry.stat(**kwargs)
+
+    class Entries:
+        def __init__(self, fd):
+            self.entries = original(fd)
+
+        def __enter__(self):
+            return (Entry(entry) for entry in self.entries)
+
+        def __exit__(self, *args):
+            self.entries.close()
+
+    monkeypatch.setattr(module.os, "scandir", Entries)
+    assert observe_roots([root], cancel=cancel) is None
+    assert len(visited) == 1
+    visited.clear()
+    assert observe_roots([root], cancel=cancel) is None
+    assert visited == []
+
+
+def test_cancelled_unavailable_root_does_not_become_a_source_error(tmp_path, monkeypatch):
+    import threading
+
+    import sessions_manager.watch as module
+
+    root = SourceRoot.create("claude", tmp_path / "native")
+    cancel = threading.Event()
+
+    def unavailable(*args):
+        cancel.set()
+        raise OSError("synthetic missing root during shutdown")
+
+    monkeypatch.setattr(module, "source_directory", unavailable)
+    assert observe_roots([root], cancel=cancel) is None

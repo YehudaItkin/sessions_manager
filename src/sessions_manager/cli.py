@@ -316,7 +316,9 @@ def runtime(options, *, providers=None, initial_scan=True):
     return cfg, catalog
 
 
-def result_envelope(catalog, kind, data, *, selected=None, providers=None, root_ids=None):
+def result_envelope(
+    catalog, kind, data, *, selected=None, providers=None, root_ids=None, phase_completeness=None
+):
     states = catalog.root_states()
     if providers:
         states = [r for r in states if json.loads(r["payload"])["provider"] in providers]
@@ -331,7 +333,14 @@ def result_envelope(catalog, kind, data, *, selected=None, providers=None, root_
         }
         for r in states
     ]
-    sessions = catalog.sessions() if selected is None else selected
+    if phase_completeness is None:
+        sessions = catalog.sessions() if selected is None else selected
+        phase_completeness = {
+            phase: "complete"
+            if all(getattr(s, phase + "_state") == "complete" for s in sessions)
+            else "partial"
+            for phase in ("history", "search", "usage")
+        }
     return envelope(
         kind,
         data,
@@ -340,15 +349,7 @@ def result_envelope(catalog, kind, data, *, selected=None, providers=None, root_
             "enumeration": "partial"
             if any(r["state"] != "complete" for r in states)
             else "complete",
-            "history": "complete"
-            if all(s.history_state == "complete" for s in sessions)
-            else "partial",
-            "search": "complete"
-            if all(s.search_state == "complete" for s in sessions)
-            else "partial",
-            "usage": "complete"
-            if all(s.usage_state == "complete" for s in sessions)
-            else "partial",
+            **phase_completeness,
             "as_of": min((r["as_of"] for r in states), default=None)
             if all(r["as_of"] is not None for r in states)
             else None,
@@ -421,26 +422,21 @@ def list_command(
         order=order,
         model=model,
         activity=activity,
+        query=query,
     )
     spec.filter([])
     cfg, catalog = runtime(ctx.obj, providers=source)
     try:
-        candidates = spec.filter(catalog.sessions(), catalog)
-        rows = QuerySpec(scope="all", sort=sort, order=order, query=query).filter(
-            candidates, catalog
-        )
-        result = result_envelope(
-            catalog,
-            "list",
-            overview_data(catalog, rows[offset : offset + limit], query)
-            | {
-                "total": len(rows),
-                "limit": limit,
-                "offset": offset,
-            },
-            selected=candidates,
-            providers=source,
-        )
+        with catalog._query_snapshot():
+            page = catalog.query_page(spec, limit, offset)
+            result = result_envelope(
+                catalog,
+                "list",
+                overview_data(catalog, page.rows, query)
+                | {"total": page.total, "limit": limit, "offset": offset},
+                providers=source,
+                phase_completeness=catalog.query_completeness(spec),
+            )
         finish(ctx.obj, result, require_search=query is not None)
     finally:
         catalog.close()

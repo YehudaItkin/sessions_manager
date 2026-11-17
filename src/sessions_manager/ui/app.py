@@ -415,7 +415,9 @@ class SessionsApp(App):
                     for r in self.config.roots
                     if r.enabled and (not providers or r.provider in providers)
                 ]
-                observations = await self.reader_call(observe_roots, roots)
+                observations = await self.reader_call(observe_roots, roots, self._cancel_scan)
+                if observations is None or self._stopping_refresh:
+                    return
                 providers = self.refresh_schedule.changed(roots, observations)
                 if not providers:
                     self.last_refresh = "unchanged"
@@ -424,11 +426,20 @@ class SessionsApp(App):
                         if self.catalog.query_page(spec, 0, 0).revision != self._revision:
                             self.reload_rows()
                     return
+            roots = [
+                root
+                for root in self.config.roots
+                if root.enabled and (not providers or root.provider in providers)
+            ]
+            cached = await self.reader_call(self.catalog.scan_cache, roots, self._cancel_scan)
+            if cached is None or self._stopping_refresh:
+                return
             roots, arguments = prepare_scan(
                 self.config,
                 self.catalog,
                 providers if providers is not None else self.filters.get("providers"),
                 invalidate=False,
+                cached=cached,
             )
             stream = iter_scan(arguments, self._cancel_scan)
             self.source_status = []

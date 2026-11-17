@@ -557,3 +557,40 @@ README and validation.md describe the new behavior and actual check results. The
 implementation is reviewable; T178 remains open because system-probe/full-suite and
 SC-002 gates did not pass on this host, including an over-budget original-code control.
 No thresholds or safety probes were relaxed. Submit as draft for review.
+
+
+## T178 performance follow-up — 2026-11-17
+
+Constitution check: existing SC-002/FR-029/030 budgets and native/cache ownership apply;
+no threshold relaxation, daemon, native DML, catalog version/table/column change or new
+dependency. The scoped work is T178 only; independent native gates remain separate.
+
+Profiling the cached 10,000-session query found random-access traversal through
+chunks_session for a metadata substring scan; a sequential scan returned the identical
+result in 0.032s versus 0.821s in the controlled comparison. CLI list still decodes every
+candidate Session despite the page API. Use SQL pages and aggregate completeness over
+the original metadata-filtered candidate set (before literal query/pagination), preserving
+partial-search exit codes, global handles, Unicode and stable unknown-last order.
+
+The cold diagnostic (with profiler overhead) took 17.4s, including 11.6s in eight root
+publications and 4.9s in generic public serialization. Retain early metadata publication
+and alias/lifecycle guarantees. Optimize repeated scalar/reflection work with tests
+preserving the serialized shape and isolation of nested mutable data; do not remove
+metadata phases or alter source verification to meet the budget.
+
+Move the TUI's full scan-cache read to a background read-only catalog connection before
+preparing main-thread writer state. Join it before actions/exit. Make stat walking
+cooperatively cancellable so Quit can stop between entries instead of finishing an
+unneeded complete tree walk; cancellation is not a source failure and cannot publish
+partial watcher observations. Existing readers still finish and catalog writes stay on
+the event loop. Add deterministic regression tests first, then run relevant boundaries,
+full pytest/Ruff, isolated SC-002 and installed-wheel smoke before updating PR #13.
+
+
+T178 final constitution check (2026-11-17): SQL pages/coverage and worker cancellation
+have observed RED-to-GREEN regressions; exact scalar/declared-shape serialization and
+unique first publication retain native, alias and lifecycle boundaries. Fixed test
+connection lifetimes rather than filtering ResourceWarning. Full 662-test strict gate,
+Ruff/format, isolated unchanged SC-002 and installed Python 3.12 wheel all pass.
+T178.1–T178.4/T178 are complete. No new schema, dependency or native capability;
+independent native acceptance/deletion tasks keep their prior status.

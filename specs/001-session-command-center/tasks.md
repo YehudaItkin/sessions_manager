@@ -1314,7 +1314,7 @@ Phase 15 implementation status (2026-11-08): T168–T170 and T172 completed with
 - [X] T175 [FR-029] RED synthetic stat/clock/source retry/coalescing tests; implement single coordinator and no-content/no-follow observations.
 - [X] T176 [FR-030] RED Pilot scrolling/page/selection tests; implement 100/20 loading, totals, revision refresh, UID/scroll and off-page batch preservation.
 - [X] T177 [FR-029] RED Pilot automatic changes/errors/dialog/details/shutdown/action tests; wire default timer, toggle/F5, publication deferral and reader drain with original UID validation.
-- [ ] T178 [FR-029/030/SC-002] Full pytest/Ruff, synthetic SC-002, installed wheel smoke, docs/validation/self-review and GitHub PR. Existing native gates/T118 remain independent.
+- [X] T178 [FR-029/030/SC-002] Full pytest/Ruff, synthetic SC-002, installed wheel smoke, docs/validation/self-review and GitHub PR. Existing native gates/T118 remain independent.
 
 Phase 16 status (2026-11-11): T173–T177 implemented and verified by 57 focused tests with warnings
 as errors, Ruff/format and an installed Python 3.12 wheel smoke (240→243 synthetic
@@ -1329,3 +1329,19 @@ prior cleanup failures did not recur. Ruff/format pass. SC-002 remains **1 PASS 
 combined filters **8.395s** exceed unchanged limits; the first-frame test times out
 on TUI shutdown. **T178 remains OPEN for SC-002**; see validation.md for fresh-corpus
 provenance and logs. No code, tests, safety probes or budget limits were changed.
+
+
+### T178 implementation increments — 2026-11-17
+
+- [X] T178.1 RED cached CLI bounded-decoding and off-page/non-matching completeness tests; reuse SQL pagination, preserve metadata-filter completeness/exit semantics, and remove the measured random-access substring query plan.
+- [X] T178.2 Preserve scalar/dataclass/path/container serialization output and nested isolation; optimize the measured repeated public reflection work while retaining early metadata generations.
+- [X] T178.3 RED deterministic cancellable-stat and TUI background-cache/readers/exit tests; use independent read-only scan-cache reads and stop between watcher entries without publication after Quit.
+- [X] T178.4 Re-profile remaining hot paths if needed; full pytest/Ruff, unchanged isolated SC-002, installed-package verification, documented self-review and PR update. Mark T178 complete only when its required gates actually pass.
+
+
+T178 completion (2026-11-17): **662 PASS / 10 SKIP** with warnings as errors; Ruff,
+format and installed Python 3.12 wheel smoke PASS. Final isolated SC-002 **5 PASS**:
+cold **9.306s**, search/navigation **0.902s**, first TUI frame **0.471s**, combined
+filters **0.354s**, TUI sort **0.326s**. Original limits and native/deletion gates are
+unchanged. Native fixture hashes are preserved. See the T178 completion section in
+validation.md for RED-to-GREEN, resource-closure fixes, provenance and self-review.

@@ -1,3 +1,5 @@
+from contextlib import closing
+
 from sessions_manager.models import SourceRoot
 from sessions_manager.sources.codex import Adapter
 from tests.support.codex_factory import make
@@ -17,7 +19,7 @@ def test_unknown_item_partial(tmp_path):
     import sqlite3
 
     make(tmp_path)
-    with sqlite3.connect(tmp_path / "thread_history_1.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "thread_history_1.sqlite")) as db, db:
         db.execute(
             "UPDATE thread_items SET item_json=?", (json.dumps({"type": "futureKind", "id": "x"}),)
         )

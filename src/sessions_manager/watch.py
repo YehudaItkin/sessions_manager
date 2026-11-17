@@ -7,7 +7,15 @@ import time
 from .sources.base import source_directory
 
 
-def observe_roots(roots):
+class _ObservationCancelled(Exception):
+    pass
+
+
+def observe_roots(roots, cancel=None):
+    def checkpoint():
+        if cancel is not None and cancel.is_set():
+            raise _ObservationCancelled()
+
     def stamp(info):
         return (
             info.st_dev,
@@ -19,10 +27,12 @@ def observe_roots(roots):
         )
 
     def walk(fd, prefix, result, depth=0):
+        checkpoint()
         if depth > 64:
             raise OSError("source nesting limit")
         with os.scandir(fd) as entries:
             for entry in entries:
+                checkpoint()
                 info = entry.stat(follow_symlinks=False)
                 relative = prefix + (entry.name,)
                 result.append((relative, stamp(info)))
@@ -40,13 +50,17 @@ def observe_roots(roots):
     observations = {}
     for root in roots:
         try:
+            checkpoint()
             with source_directory(root.path, root.path) as fd:
                 result = [((), stamp(os.fstat(fd)))]
                 walk(fd, (), result)
+                checkpoint()
                 observations[root.root_id] = tuple(sorted(result))
+        except _ObservationCancelled:
+            return None
         except OSError:
             observations[root.root_id] = None
-    return observations
+    return None if cancel is not None and cancel.is_set() else observations
 
 
 class RefreshSchedule:

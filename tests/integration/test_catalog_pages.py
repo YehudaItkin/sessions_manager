@@ -107,3 +107,53 @@ def test_page_rejects_invalid_queries_and_bounds(paged):
     ]:
         with pytest.raises(Failure):
             catalog.query_page(spec, limit, offset)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"query": "absent"},
+        {"scope": "hidden"},
+        {"providers": ["grok"]},
+        {"project": "My Project"},
+    ],
+)
+def test_completeness_uses_candidates_before_search_without_decoding(paged, monkeypatch, options):
+    from dataclasses import replace
+
+    import sessions_manager.catalog as module
+
+    catalog, _, _ = paged
+    spec = QuerySpec(**options)
+    candidates = replace(spec, query=None).filter(catalog.sessions(), catalog)
+    expected = {
+        key: "complete"
+        if all(getattr(s, key + "_state") == "complete" for s in candidates)
+        else "partial"
+        for key in ("history", "search", "usage")
+    }
+
+    def forbidden(payload):
+        raise AssertionError("completeness decoded an unloaded Session")
+
+    monkeypatch.setattr(module, "session_payload", forbidden)
+    assert catalog.query_completeness(spec) == expected
+
+
+def test_scan_cache_uses_an_independent_read_only_connection(paged, tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    catalog, root, rows = paged
+    other = SourceRoot.create("grok", tmp_path / "other")
+    catalog.publish(other, [Session.build(other, "outside", other.path / "session")], complete=True)
+    changes = catalog.connection.total_changes
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        cached = pool.submit(catalog.scan_cache, [root]).result()
+        assert set(cached) == {s.session_uid for s in rows}
+        assert cached[rows[2].session_uid].hidden
+        stopped = threading.Event()
+        stopped.set()
+        assert pool.submit(catalog.scan_cache, [root], stopped).result() is None
+    assert catalog.connection.total_changes == changes

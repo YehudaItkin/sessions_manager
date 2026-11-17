@@ -1,6 +1,7 @@
 import json
 import pickle
 import shutil
+from contextlib import closing
 
 import pytest
 
@@ -121,7 +122,7 @@ def test_alias_usage_agreement_is_independent_of_history(
             if provider == "codex":
                 import sqlite3
 
-                with sqlite3.connect(roots[1].path / "state_5.sqlite") as db:
+                with closing(sqlite3.connect(roots[1].path / "state_5.sqlite")) as db, db:
                     db.execute("DELETE FROM threads")
             else:
                 shutil.rmtree(second) if second.is_dir() else second.unlink()

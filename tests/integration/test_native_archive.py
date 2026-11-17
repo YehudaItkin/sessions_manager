@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 
 import pytest
 
@@ -21,7 +21,7 @@ def archive_case(tmp_path, monkeypatch):
     home = tmp_path / "home"
     for name in ("parent", "child", "prior", "neighbor"):
         make(home, name, rollout=False)
-    with sqlite3.connect(home / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(home / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         db.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT DEFAULT 'paginated'")
         db.execute("UPDATE threads SET archived=1 WHERE id='prior'")
@@ -41,7 +41,7 @@ def archive_case(tmp_path, monkeypatch):
     behavior = {"lost": False, "partial": False}
 
     def flags():
-        with sqlite3.connect(home / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(home / "state_5.sqlite")) as db, db:
             return dict(db.execute("SELECT id,archived FROM threads"))
 
     class Client:
@@ -57,7 +57,7 @@ def archive_case(tmp_path, monkeypatch):
         def call(self, method, params):
             tid = params["threadId"]
             calls.append((method, tid))
-            with sqlite3.connect(home / "state_5.sqlite") as db:
+            with closing(sqlite3.connect(home / "state_5.sqlite")) as db, db:
                 affected = [tid]
                 for current in affected:
                     affected.extend(
@@ -149,7 +149,7 @@ def test_legacy_uncertain_archive_can_recover_with_current_trusted_paths(tmp_pat
         behavior,
         client,
     ):
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute("UPDATE threads SET cwd='/synthetic-legacy-project'")
         behavior["lost"] = True
         result = perform(service, "archive", uid)
@@ -206,7 +206,7 @@ def test_native_missing_rollout_path_rewrites_are_verified_and_recoverable(
         behavior,
         client,
     ):
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             for tid in ("parent", "child", "prior", "neighbor"):
                 prefix = "archived_sessions" if tid == "prior" else "sessions/2026/11/06"
                 db.execute(
@@ -289,7 +289,7 @@ def test_changed_graph_rejects_confirmation_before_native_mutation(tmp_path, mon
         client,
     ):
         plan = service.preview("archive", uid)
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute("INSERT INTO thread_spawn_edges VALUES ('parent','neighbor','completed')")
         with pytest.raises(Failure, match="archive_source_changed"):
             service.commit("archive", uid, plan["confirmation_token"], assert_closed=True)
@@ -348,7 +348,7 @@ def test_retry_never_expands_scope_and_history_changes_conflict(tmp_path, monkey
     ):
         behavior["lost"] = True
         result = perform(service, "archive", uid)
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute("INSERT INTO thread_spawn_edges VALUES ('parent','neighbor','completed')")
         before = len(calls)
         retry = service.retry(result["operation_id"], assert_closed=True)
@@ -415,7 +415,7 @@ def test_archive_rejects_missing_rollout_reference_outside_native_home(tmp_path,
         behavior,
         client,
     ):
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET rollout_path=? WHERE id='child'",
                 (str(tmp_path / "outside/missing.jsonl"),),
@@ -467,7 +467,7 @@ def test_missing_rollout_requires_trusted_existing_parents(tmp_path, monkeypatch
                     return info
 
                 monkeypatch.setattr(Path, "lstat", foreign)
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET rollout_path=? WHERE id='child'",
                 (str(parent / "missing.jsonl"),),
@@ -492,14 +492,14 @@ def test_missing_rollout_binding_change_invalidates_preview_before_rpc(
     ):
         parent = root.path / "safe-parent"
         parent.mkdir()
-        with sqlite3.connect(root.path / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET rollout_path=? WHERE id='child'",
                 (str(parent / "missing.jsonl"),),
             )
         plan = service.preview("archive", uid)
         if change == "reference":
-            with sqlite3.connect(root.path / "state_5.sqlite") as db:
+            with closing(sqlite3.connect(root.path / "state_5.sqlite")) as db, db:
                 db.execute(
                     "UPDATE threads SET rollout_path=? WHERE id='child'",
                     (str(parent / "different.jsonl"),),
@@ -659,7 +659,7 @@ def test_archive_does_not_mark_old_index_fresh_when_native_history_changed(tmp_p
         behavior,
         client,
     ):
-        with sqlite3.connect(root.path / "thread_history_1.sqlite") as db:
+        with closing(sqlite3.connect(root.path / "thread_history_1.sqlite")) as db, db:
             item = json.loads(
                 db.execute(
                     "SELECT item_json FROM thread_items WHERE thread_id='parent'"
