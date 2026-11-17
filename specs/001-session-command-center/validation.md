@@ -899,3 +899,40 @@ validated host; delivery is a draft PR, with no claim that these gates passed.
 
 Draft delivery: [GitHub PR #13](https://github.com/YehudaItkin/sessions_manager/pull/13).
 T178 remains open; this PR does not claim a passing SC-002/full-suite gate.
+
+
+## T178 recheck — 2026-11-17
+
+Rechecked unchanged revision **40fb63647b4106cf55b2a288be35b5529bfbd454**. No source,
+test, native-format, schema, safety-probe or threshold changes were made.
+
+- Full suite: **648 passed, 10 skipped**, **171.80s**, no warnings. The nine cleanup
+  failures recorded on 2026-11-11 did not recur. Five skips are the separately run
+  performance tests; the other five are the existing native opt-in gates.
+- Ruff check, formatting of **160** Python files and git diff --check: **PASS**.
+- SC-002, run after the full suite and corpus generation with no simultaneous project
+  tests/build/smoke: **1 passed, 4 failed**, **252.78s**. TUI sort now passes at
+  **1.283s** (<=2 required). Cold discovery **124.115s** (<=10 required), warm
+  search/navigation **70.277s**, combined filter/sort **8.395s** (each <=2 required).
+  The first-frame test failed with **TimeoutExpired during TUI shutdown**. It did
+  not report a first-frame time; startup absence is not established by that failure.
+- Fresh seed-1 corpus: **10,000 sessions**, 2,500 per provider, requested
+  **1,073,741,824 history bytes**, actual **1,130,785,488 native bytes**. The retained
+  temporary corpus had lost its metadata/configuration and was not reused.
+- Python **3.14.2**, SQLite **3.50.4**, Textual **6.12.0**, pytest **9.2.0**,
+  pytest-asyncio **1.4.1.post1**, Ruff **0.17.3**. Observed host context: swap used
+  **25,715.75MiB before / 25,566.06MiB after**; load averages **17.02/11.57/9.30**
+  before and **8.93/12.16/11.00** after. These observations do not establish causation.
+
+Commands: `.venv/bin/python -m pytest -q --tb=short`, then
+`.venv/bin/python -m tests.support.make_corpus --output <run>/corpus --sessions 10000 --history-bytes 1073741824`,
+then `.venv/bin/python -m pytest tests/performance --corpus <run>/corpus -q -s --tb=short`.
+Logs, JUnit reports, corpus and machine-readable summary were retained under
+`.corpus/t178-20261117-um7euxyt/` (ignored by Git). The benchmark manager catalog is
+`/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-r7nl229x`.
+
+**Current T178 status: OPEN for SC-002**, including the TUI shutdown timeout in its
+first-frame test. The full-suite/cleanup failures from the prior run are not current
+failures. Installed-wheel evidence from 2026-11-11 remains historical and was not
+repeated in this recheck. PR #13 remains a draft. Existing native opt-in gates were
+not run and retain their independent status. No claim of a passing SC-002 is made.

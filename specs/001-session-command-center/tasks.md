@@ -1316,9 +1316,16 @@ Phase 15 implementation status (2026-11-08): T168–T170 and T172 completed with
 - [X] T177 [FR-029] RED Pilot automatic changes/errors/dialog/details/shutdown/action tests; wire default timer, toggle/F5, publication deferral and reader drain with original UID validation.
 - [ ] T178 [FR-029/030/SC-002] Full pytest/Ruff, synthetic SC-002, installed wheel smoke, docs/validation/self-review and GitHub PR. Existing native gates/T118 remain independent.
 
-Phase 16 status: T173–T177 implemented and verified by 57 focused tests with warnings
+Phase 16 status (2026-11-11): T173–T177 implemented and verified by 57 focused tests with warnings
 as errors, Ruff/format and an installed Python 3.12 wheel smoke (240→243 synthetic
 sessions; original hashes preserved). T178 is OPEN: full run 636 PASS / 10 SKIP /
 9 cleanup-probe failures, and all five SC-002 timings failed; original HEAD also
 exceeds the warm budget on the same cache. Thresholds and native safety checks remain
 unchanged. Draft PR delivery and full evidence are recorded in validation.md.
+
+Recheck 2026-11-17: full pytest is now **648 PASS / 10 SKIP / 0 FAIL**; all nine
+prior cleanup failures did not recur. Ruff/format pass. SC-002 remains **1 PASS /
+4 FAIL**: TUI sort **1.283s** passes; cold **124.115s**, search/navigation **70.277s**,
+combined filters **8.395s** exceed unchanged limits; the first-frame test times out
+on TUI shutdown. **T178 remains OPEN for SC-002**; see validation.md for fresh-corpus
+provenance and logs. No code, tests, safety probes or budget limits were changed.
