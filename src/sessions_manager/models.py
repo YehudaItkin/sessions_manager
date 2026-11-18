@@ -9,6 +9,7 @@ import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -164,9 +165,20 @@ def safe_text(value: Any) -> str:
     return "".join(c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf"))
 
 
+_PUBLIC_SCALARS = frozenset((str, int, float, bool, type(None)))
+
+
+@lru_cache(maxsize=128)
+def _public_fields(cls):
+    return tuple(f.name for f in dataclasses.fields(cls))
+
+
 def public(value):
+    if type(value) in _PUBLIC_SCALARS:
+        return value
     if dataclasses.is_dataclass(value):
-        return {f.name: public(getattr(value, f.name)) for f in dataclasses.fields(value)}
+        cls = value if isinstance(value, type) else type(value)
+        return {name: public(getattr(value, name)) for name in _public_fields(cls)}
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):

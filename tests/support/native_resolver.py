@@ -3,6 +3,7 @@
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 
@@ -12,7 +13,12 @@ def resolve(provider, argv, cwd, home):
         if argv[1] != "resume":
             return None
         native = argv[2]
-        with sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True) as db:
+        with (
+            closing(
+                sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True)
+            ) as db,
+            db,
+        ):
             row = db.execute("SELECT rollout_path FROM threads WHERE id=?", (native,)).fetchone()
         return Path(row[0]) if row and Path(row[0]).is_file() else None
     native = argv[argv.index("--resume") + 1]
@@ -36,6 +42,9 @@ def resolve(provider, argv, cwd, home):
     directory = home / "chats" / workspace / native
     if not (directory / "store.db").exists():
         return None
-    with sqlite3.connect((directory / "store.db").as_uri() + "?mode=ro", uri=True) as db:
+    with (
+        closing(sqlite3.connect((directory / "store.db").as_uri() + "?mode=ro", uri=True)) as db,
+        db,
+    ):
         row = db.execute("SELECT value FROM meta WHERE key='0'").fetchone()
     return directory if row and json.loads(bytes.fromhex(row[0]))["agentId"] == native else None

@@ -3,6 +3,33 @@ import pytest
 from sessions_manager.models import Capability, Session, SourceRoot, counter, safe_text, timestamp
 
 
+def test_public_preserves_declared_shape_and_copies_nested_mutable_values(tmp_path):
+    from dataclasses import dataclass
+
+    from sessions_manager.models import public
+
+    @dataclass
+    class Receipt:
+        path: object
+        values: object
+
+    @dataclass
+    class TaggedString(str):
+        label: str = "tag"
+
+    original = Receipt(tmp_path, {"nested": [None, True, 0, 1.5, "Straße", TaggedString()]})
+    original.private_buffer = "must not be exposed"
+    value = public(original)
+    assert value == {
+        "path": str(tmp_path),
+        "values": {"nested": [None, True, 0, 1.5, "Straße", {"label": "tag"}]},
+    }
+    value["values"]["nested"].append("changed output")
+    assert len(original.values["nested"]) == 6
+    original.values["other"] = "changed original"
+    assert "other" not in value["values"]
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

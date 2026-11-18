@@ -1305,3 +1305,76 @@ Assessment: 2026-11-07. Findings F1–F5 assess the present code against spec.md
   После создания TrashEntry, но до source relocation, Failure (например insufficient_space) сохраняет item/entry failed_no_change и item.recovery_options=['new_preview']. Однако trash_list показывает retry_same_confirmation/inspect_trash, а commit считает failed_no_change терминальным и при retry возвращает тот же результат без повторной попытки. In-memory commit/list/retry probe подтвердил этот замкнутый путь с одним mutation attempt; пользователь не получает ожидаемого действия, а staging entry остаётся в корзине. Различать terminal no-source-change, незавершённую recoverable mutation и pending terminal-owner cleanup: показывать только выполнимые действия, объяснять новый preview исходной сессии и предоставлять подтверждённый ограниченный путь удаления принадлежащего менеджеру ненужного staging/backup, когда это безопасно. Не выдавать незавершённую копию за восстановимую историю, не делать generic unlock, автоматическую/возрастную очистку или widening прежнего scope. Сначала воспроизвести сбои до/после entry/manifest/backup и до первого rename, restart/retry/новый preview, mixed batch и отдельный terminal item с ещё pending owner. Проверить реальные CLI/Pilot действия, отсутствие бесконечного no-op Retry, сохранность native/соседей/неожиданных версий и прежние purge cleanup_pending/no-overwrite/идемпотентные гарантии.
 
 Phase 15 implementation status (2026-11-08): T168–T170 and T172 completed with observed RED-to-GREEN regressions, boundary/full/Ruff/package and unchanged SC-002 checks. T171 remains OPEN: the explicit isolated native run still failed for Claude/Grok/Cursor (Grok now refuses the exact version profile before resume); Warp remains externally blocked and was not accessed. No personal stores, credentials, remote model calls or unrestricted fallback were used. See validation.md for final evidence and known limitations. Original tasks/gates and conditional cleanup T118 remain unchanged.
+
+
+## Phase 16: TUI auto refresh and paged overview — 2026-11-11
+
+- [X] T173 [FR-029/030] Update spec/plan/tasks before behavior changes; record TDD evidence.
+- [X] T174 [FR-030] RED SQL page parity/revision/bounded decoding tests; implement query_page, UID position and matching selection without schema migration.
+- [X] T175 [FR-029] RED synthetic stat/clock/source retry/coalescing tests; implement single coordinator and no-content/no-follow observations.
+- [X] T176 [FR-030] RED Pilot scrolling/page/selection tests; implement 100/20 loading, totals, revision refresh, UID/scroll and off-page batch preservation.
+- [X] T177 [FR-029] RED Pilot automatic changes/errors/dialog/details/shutdown/action tests; wire default timer, toggle/F5, publication deferral and reader drain with original UID validation.
+- [X] T178 [FR-029/030/SC-002] Full pytest/Ruff, synthetic SC-002, installed wheel smoke, docs/validation/self-review and GitHub PR. Existing native gates/T118 remain independent.
+
+Phase 16 status (2026-11-11): T173–T177 implemented and verified by 57 focused tests with warnings
+as errors, Ruff/format and an installed Python 3.12 wheel smoke (240→243 synthetic
+sessions; original hashes preserved). T178 is OPEN: full run 636 PASS / 10 SKIP /
+9 cleanup-probe failures, and all five SC-002 timings failed; original HEAD also
+exceeds the warm budget on the same cache. Thresholds and native safety checks remain
+unchanged. Draft PR delivery and full evidence are recorded in validation.md.
+
+Recheck 2026-11-17: full pytest is now **648 PASS / 10 SKIP / 0 FAIL**; all nine
+prior cleanup failures did not recur. Ruff/format pass. SC-002 remains **1 PASS /
+4 FAIL**: TUI sort **1.283s** passes; cold **124.115s**, search/navigation **70.277s**,
+combined filters **8.395s** exceed unchanged limits; the first-frame test times out
+on TUI shutdown. **T178 remains OPEN for SC-002**; see validation.md for fresh-corpus
+provenance and logs. No code, tests, safety probes or budget limits were changed.
+
+
+### T178 implementation increments — 2026-11-17
+
+- [X] T178.1 RED cached CLI bounded-decoding and off-page/non-matching completeness tests; reuse SQL pagination, preserve metadata-filter completeness/exit semantics, and remove the measured random-access substring query plan.
+- [X] T178.2 Preserve scalar/dataclass/path/container serialization output and nested isolation; optimize the measured repeated public reflection work while retaining early metadata generations.
+- [X] T178.3 RED deterministic cancellable-stat and TUI background-cache/readers/exit tests; use independent read-only scan-cache reads and stop between watcher entries without publication after Quit.
+- [X] T178.4 Re-profile remaining hot paths if needed; full pytest/Ruff, unchanged isolated SC-002, installed-package verification, documented self-review and PR update. Mark T178 complete only when its required gates actually pass.
+
+
+T178 completion (2026-11-17): **662 PASS / 10 SKIP** with warnings as errors; Ruff,
+format and installed Python 3.12 wheel smoke PASS. Final isolated SC-002 **5 PASS**:
+cold **9.306s**, search/navigation **0.902s**, first TUI frame **0.471s**, combined
+filters **0.354s**, TUI sort **0.326s**. Original limits and native/deletion gates are
+unchanged. Native fixture hashes are preserved. See the T178 completion section in
+validation.md for RED-to-GREEN, resource-closure fixes, provenance and self-review.
+
+
+## Phase 17: Convergence
+
+Assessment: 2026-11-18. Current implementation assessed against spec.md, plan.md and all
+182 existing task entries (178 primary IDs plus T178.1–T178.4), without branch/history
+comparison. Checked 30 FR, 27 story acceptance scenarios, 7 buildable technical SC,
+24 plan decision blocks and the five constitutional principles plus project/workflow
+constraints. SC-003 owner usability timing remains a separate manual outcome metric.
+Current verification: full pytest with warnings as errors **662 PASS / 10 SKIP**
+(116.86s), Ruff check/format **PASS** (161 files); isolated synthetic probes below expose
+uncovered behavior despite the passing suite. SC-002 was not rerun by this assessment;
+its existing completed T178 evidence and unchanged budgets are retained. Ordinary stats
+exclude native archives by the explicit plan: Codex archive decision; this is intentional,
+not a new statistics-inclusion task. Conditional Codex cleanup T118 remains unchanged.
+Only this section is appended; existing tasks and completion records remain intact.
+
+- [X] T179 **HIGH** [F1] Согласовать результат автообновления и retry с фактической публикацией каталога per FR-026/029, T151/T174/T175/T177 и plan: lifecycle/publication and refresh coordinator decisions (contradicts).
+  Файлы: `src/sessions_manager/ui/app.py`, `src/sessions_manager/watch.py`, `src/sessions_manager/discovery.py`, `tests/acceptance/test_live_overview.py` и lifecycle/alias integration tests.
+  `refresh_catalog` вычисляет outcomes из reader result до `publish_scan`; guarded publication может сохранить root partial с `lifecycle_refresh_stale`, тогда как last_refresh становится complete и provider удаляется из retry. Подтверждённая synthetic probe: lifecycle begin/finish без native change непосредственно перед full publication отклоняет устаревший reader; каталог остаётся `lifecycle_refresh_stale`, last_refresh=`complete`, retry_at={}; при следующих неизменившихся stat через 35s root остаётся stale, last_refresh=`unchanged`. Сначала воспроизвести RED на управляемых часах, включая другой manager writer, один/несколько roots одного provider, alias guards и отложенную публикацию после диалога. Учитывать фактические publication receipts и сохранённую неполноту; pending/deferred результат не считать подтверждённым complete. Назначать требуемый повтор через 30s даже без новых native stat изменений и снимать его только после успешного согласованного прохода. Сохранить кеш, single-scan/coalescing, source scope, 5s от завершения, dialog/details/action pause и joins при Quit; не обходить lifecycle/alias guards и не выдавать obsolete reader за свежий. Проверить восстановление после retry, явный статус и отсутствие ложного complete/лишних параллельных scan; записать RED-to-GREEN и relevant/full/Ruff evidence.
+
+- [X] T180 **HIGH** [F2] Показывать сохранённую неполноту history/search/usage в TUI независимо от in-memory retry state per FR-009/026/030, US1/AC2, US2/AC1–AC2, SC-008, T031/T048/T104/T177/T178.1 и plan: explicit completeness/SQL page decisions (partial).
+  Файлы: `src/sessions_manager/ui/app.py`, `src/sessions_manager/catalog.py`, `tests/acceptance/test_live_overview.py`, `tests/integration/test_catalog_pages.py` и cached overview/search acceptance tests.
+  `update_status` проверяет только root enumeration states и refresh_schedule.retry_at, не сохранённые phase states. Подтверждённая synthetic probe через настоящий discovery: OSError в Claude history reader сохраняет root enumeration complete, history/search partial; после закрытия/повторного открытия Catalog и TUI до первого poll literal search выдаёт `Loaded 0 of 0 | Last refresh: cached | claude:complete` без признака неполноты. Сначала воспроизвести RED для warm startup, auto off, нулевых совпадений и неполной записи вне загруженной страницы/без совпадения с запросом. Показывать достоверную phase completeness и доступную причину для metadata-filtered candidate scope до буквального поиска/pagination, переиспользуя bounded SQL aggregation без полной десериализации Session. Различать успешную enumeration, неполную/недоступную историю/поиск/usage и cached freshness; not_recorded не превращать в ноль или необоснованный бесконечный error retry. Проверить снятие предупреждения после recovery, source/прочие фильтры, dialogs/details snapshot и сохранение UID/scroll/batch. Обновить документацию при изменении статуса; сохранить schema 4/native formats и SC-002 <=2s/<=10s. После T179–T180 выполнить full pytest/Ruff, изолированный неизменённый SC-002, installed-wheel smoke и документированный self-review/evidence для PR.
+
+- [ ] T181 **HIGH** [F3] Завершить остающийся native resume acceptance gate отдельно от исправлений автообновления per US3/AC1–AC2, FR-010/011/012, SC-004, T051–T054/T112/T113/T130/T144/T154/T159/T167/T171 и plan: validation gate 3/exact native binding decision (partial).
+  Файлы: `tests/acceptance/test_native_resume_runtime.py`, `tests/support/native_resume_gate.py`, `tests/acceptance/test_warp_runtime.py`, launch/binding regression tests и validation documentation.
+  Это продолжение существующего незакрытого gate T171, не новое разрешение запускать native CLI или обходить ограничения. Текущие acceptance tests пропускают Claude/Grok/Cursor без explicit executable opt-in; harmless Warp gate также opt-in. Passing default suite и fake argv/cwd children не доказывают загрузку прежнего native разговора. При допустимых условиях подтвердить исходные native ID, synthetic marker/context, cwd, отсутствие нового разговора и сохранность соседней disposable истории для поддержанных profiles; исправления начинать с expected failing regression. Сохранить точный failed/unverified результат, если sandbox/offline/profile условия не позволяют проверку, и оставить соответствующий gate открытым. Recorded Warp access denial остаётся обязательной границей: не запускать Warp и не обходить запрет shell/UI/другим transport; продолжать harmless single-claim/exact argv/cwd/exit gate только после появления разрешённого доступа. Не обращаться к личным stores, credentials, AI turns или удалённым сервисам и не применять unrestricted fallback. Не считать reader-compatible fixture доказанным native loader format, не расширять Codex archive profile и не обходить T118. T179–T180 можно завершить независимо от этого внешнего gate.
+
+Implementation checkpoint (2026-11-18): T179–T180 complete. Full strict pytest
+**668 passed, 10 skipped**, Ruff and installed wheel **PASS**. SC-002 **5 passed**:
+cold **7.419s**, warm **0.332–0.747s**. T181 awaits explicit native resume opt-in and
+the separately required Warp access. See validation.md for observations and commands.

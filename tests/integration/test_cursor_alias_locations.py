@@ -1,6 +1,7 @@
 import pickle
 import shutil
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -23,7 +24,7 @@ def copies(tmp_path, variant):
     first = make(root.path, "same", cwd=tmp_path / "project", text="ALPHA synthetic")
     second = root.path / "chats" / "second-workspace" / first.name
     shutil.copytree(first, second)
-    with sqlite3.connect(second / "store.db") as db:
+    with closing(sqlite3.connect(second / "store.db")) as db, db:
         if variant == "text":
             db.execute("UPDATE blobs SET data=? WHERE id='user'", (wire(1, "BETA synthetic"),))
         elif variant == "graph":

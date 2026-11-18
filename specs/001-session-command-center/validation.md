@@ -798,3 +798,267 @@ native capability. T001–T167 prefix SHA-256 remains
 c95baa9091de4fa17f5933037a20390bf72f42ce5739799f763d3f29cee75c98 (156,791 bytes);
 requirements checklist remains **16/16 PASS**, SHA-256
  dd67a44fab70fe61e690581764c9f811a0abe15705e5702548ed68e96a5f167c.
+
+
+## Phase 16 — TUI auto refresh and pages (2026-11-11)
+
+FR-029/030 and T173–T178 implement the approved 5s / 100 rows / 20-row threshold
+plan. Spec/plan/tasks were updated before application changes. No dependencies,
+native formats or catalog schema migration were introduced (schema remains 4).
+
+Observed TDD evidence:
+- Catalog pages: 34 expected failures (missing query_page), then 34 PASS. Tests
+  compare every sort/direction and combined Unicode/search/date/scope selection
+  against QuerySpec.filter, verify bounded decoding, global selection, offsets and
+  local/external writer revisions.
+- Watch/schedule: expected import failure before watch.py, then 4 PASS using
+  injected clocks, synthetic stat changes and a nested-link boundary.
+- Pilot: initial expected 2 failures / 4 missing-schedule errors before wiring;
+  automatic creation/modification/removal, toggle/F5, source error/retry, aliases,
+  provider-only scan scope, deferred dialogs/details and original action UID covered.
+- Additional observed RED regressions: late dialog changes were lost after a stamp
+  advanced before publication; stale queued pages survived filter changes; a vanished
+  anchor page left an empty table despite surviving rows; selected UID relocation
+  decoded intervening pages; pending scans started after Quit. Each gained a regression
+  test and implementation fix. Both normal and cancelled readers/stat workers are
+  joined on shutdown. Batch confirmation retains original off-page IDs.
+
+Validation notes: the first sandboxed full run had 635 PASS, 10 SKIP and 8 FAIL;
+failures included denied sandbox-exec, unavailable system probes and modal test
+issues. A retained original-app probe reproduced the existing 80x24 staging-purge
+confirmation button outside the visible viewport. Its Pilot test now scrolls the
+button into view before clicking. An actual regression in the new handler treating
+archive/trash DataTable events as SessionTable events was corrected with a type guard.
+Final full-suite, package and SC-002 results are recorded below after completion.
+
+Native gates T113/T118/T130/T144/T154/T159/T167/T171 retain their prior independent
+status. This change does not run personal stores, Warp, credentials or model calls,
+and does not broaden native cleanup/resume/archive capability.
+
+Further TDD: a session history-reader failure originally reported complete and never
+retried without another stat change; RED regression now preserves old events, shows
+incompleteness and retries after 30s. An expired retry for a source excluded by the
+current filter originally produced next_poll in the past; RED clock regression now
+retains that source's retry while polling the selected sources at the normal interval.
+Scheduled work is passed as an async callable so cancellation before execution does
+not leave an unawaited coroutine. Catalog-only Pilot fixtures use controlled clocks.
+Scroll messages bind the loaded row count, coalescing stale events across page loads.
+
+The elevated full run completed with **636 passed, 10 skipped, 9 failed** (1110.79s).
+All nine failures were in existing cleanup/version/handle-probe paths, including explicit
+handle_probe_unavailable and no-change operations that left native files in place.
+No safety checks or timeouts were relaxed. The run preceded the final callable-worker
+cleanup; its unawaited-coroutine warning is covered by the subsequent warnings-as-errors
+focused suite. Quiet isolated retries and final performance/package results follow.
+
+Installed wheel verification: **PASS**, Python **3.12.12 / SQLite 3.54.1**, fresh
+locked non-editable environment outside the checkout. CLI help/version/refresh/list/
+show/stats/resume dry-run/hide/unhide pass on **240 synthetic sessions**, **420 messages**,
+**1,200 known tokens**. Installed TUI starts with 100 rows, loads a second page,
+detects additions through 243 sessions, defers publication under details, and honors
+the toggle/F5. Original native-file hashes remain unchanged. Receipt:
+`/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-phase16-installed-dddkuqo0/receipt.json`.
+Wheel SHA-256: **4da68ed6b1b519f299a207d160391fa0defce184e0bda1cac826921dfc9b63d1**.
+
+SC-002 was run without concurrent project tests/build/smoke on a freshly generated
+seed-1 corpus: **10,000 mixed sessions**, requested **1,073,741,824 bytes**, actual
+**1,129,935,632 native bytes**. Command:
+`.venv/bin/python -m pytest tests/performance --corpus /private/tmp/sessions-phase16-corpus -q -s --tb=short`.
+**5 FAILED**: cold **145.135s** (<=10 required), warm search/navigation **17.560s**,
+combined filters **9.166s**, TUI sort **4.784s** (each <=2 required); the first TUI frame
+did not contain a synthetic row within the existing 5s observation window. Targets
+and assertions were not relaxed. Warm manager catalog:
+`/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-6q1khujo`.
+The old retained corpus was incomplete and was not used for these measurements.
+Observed host swap afterward: **12,541MiB used / 13,312MiB total**. This is environment
+context, not proof of causation or a passing budget. SC-002 remains an OPEN delivery gate.
+
+Final focused run (after all fixes):
+`.venv/bin/python -m pytest tests/acceptance/test_live_overview.py tests/integration/test_catalog_pages.py tests/unit/test_watch.py -q -W error --tb=short`
+— **57 passed**, **67.49s**, no warnings. Ruff check, formatting of **160** Python
+files, compileall and git diff --check pass. Final wheel/sdist build passes.
+A separate quiet retry still reproduced handle_probe_unavailable in the existing
+staging-purge setup (1 failed / 1 passed); no cleanup probe or safety bound was changed.
+
+Quiet baseline comparison: exported original HEAD **a36f80d** src into an isolated
+temporary tree and selected it via child-only PYTHONPATH, using the same 10,000-row
+cached catalog and identical list/search + show + short-search subprocess sequence.
+With no concurrent project test/build/smoke, original code took **17.711s**, current
+code **11.327s**; both exceed <=2s. This demonstrates an unmet baseline budget on this
+host too, not proof that the new feature meets SC-002. The limits remain unchanged.
+
+Sole-maintainer self-review: checked FR-029/030 and T173–T178 traceability; parameterized
+SQL, Unicode/date/scope/sort parity, global handles, bounded page decoding, revision
+refresh and vanished-anchor fallback; coalesced page/refresh requests; original UID
+and confirmation scope; no-follow stat reads, cache retention, independent retries,
+dialog deferral and actual reader joins including pre-start cancellation. No new
+dependency, native format/schema, deletion policy, credential access or model call.
+Installed native hashes are unchanged. Existing native gates retain their independent
+status. **T178 remains OPEN** for a passing full suite/system probes and SC-002 on a
+validated host; delivery is a draft PR, with no claim that these gates passed.
+
+Draft delivery: [GitHub PR #13](https://github.com/YehudaItkin/sessions_manager/pull/13).
+T178 remains open; this PR does not claim a passing SC-002/full-suite gate.
+
+
+## T178 recheck — 2026-11-17
+
+Rechecked unchanged revision **40fb63647b4106cf55b2a288be35b5529bfbd454**. No source,
+test, native-format, schema, safety-probe or threshold changes were made.
+
+- Full suite: **648 passed, 10 skipped**, **171.80s**, no warnings. The nine cleanup
+  failures recorded on 2026-11-11 did not recur. Five skips are the separately run
+  performance tests; the other five are the existing native opt-in gates.
+- Ruff check, formatting of **160** Python files and git diff --check: **PASS**.
+- SC-002, run after the full suite and corpus generation with no simultaneous project
+  tests/build/smoke: **1 passed, 4 failed**, **252.78s**. TUI sort now passes at
+  **1.283s** (<=2 required). Cold discovery **124.115s** (<=10 required), warm
+  search/navigation **70.277s**, combined filter/sort **8.395s** (each <=2 required).
+  The first-frame test failed with **TimeoutExpired during TUI shutdown**. It did
+  not report a first-frame time; startup absence is not established by that failure.
+- Fresh seed-1 corpus: **10,000 sessions**, 2,500 per provider, requested
+  **1,073,741,824 history bytes**, actual **1,130,785,488 native bytes**. The retained
+  temporary corpus had lost its metadata/configuration and was not reused.
+- Python **3.14.2**, SQLite **3.50.4**, Textual **6.12.0**, pytest **9.2.0**,
+  pytest-asyncio **1.4.1.post1**, Ruff **0.17.3**. Observed host context: swap used
+  **25,715.75MiB before / 25,566.06MiB after**; load averages **17.02/11.57/9.30**
+  before and **8.93/12.16/11.00** after. These observations do not establish causation.
+
+Commands: `.venv/bin/python -m pytest -q --tb=short`, then
+`.venv/bin/python -m tests.support.make_corpus --output <run>/corpus --sessions 10000 --history-bytes 1073741824`,
+then `.venv/bin/python -m pytest tests/performance --corpus <run>/corpus -q -s --tb=short`.
+Logs, JUnit reports, corpus and machine-readable summary were retained under
+`.corpus/t178-20261117-um7euxyt/` (ignored by Git). The benchmark manager catalog is
+`/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-r7nl229x`.
+
+**Current T178 status: OPEN for SC-002**, including the TUI shutdown timeout in its
+first-frame test. The full-suite/cleanup failures from the prior run are not current
+failures. Installed-wheel evidence from 2026-11-11 remains historical and was not
+repeated in this recheck. PR #13 remains a draft. Existing native opt-in gates were
+not run and retain their independent status. No claim of a passing SC-002 is made.
+
+
+## T178 completion — 2026-11-17
+
+T178 is now **COMPLETE**. The earlier recheck failures above are historical. The
+implementation keeps the original <=10s discovery / <=2s cached-navigation budgets,
+early metadata publication, stable IDs, schema **4**, native formats and safety gates.
+
+Measured changes and TDD:
+- The original cached CLI decoded 61/64 records even when displaying three. Four RED
+  contract cases and five missing-API cases now pass: SQL pagination restores only the
+  page (plus displayed match context), while SQL aggregate completeness still covers
+  metadata-filtered candidates before literal search or pagination. Page/count/coverage/
+  handles/source states share a read snapshot. Incomplete off-page/non-matching records
+  still produce partial search and exit 3; no false completeness was introduced.
+- Profiling found the metadata substring branch traversing chunks_session in UID order
+  with repeated table seeks. Identical-result diagnostic: 0.821s versus 0.032s for a
+  sequential scan. Exact instr/casefold verification and conversation FTS remain in
+  place; no index, table, column, dependency or stored format was added.
+- Generic public serialization fast-paths exact scalar types and caches only bounded
+  declared field-name/type metadata, not Session values or transcript bodies. Nested
+  output isolation, declared-field privacy and dataclass subclasses retain their shape.
+- Newly inserted unique sessions now carry their generation on the first INSERT and
+  avoid rewriting the identical payload. Existing rows, aliases, lifecycle guards and
+  early metadata generations keep their reconciled updates. The first changed-code
+  cold gate remained RED at 10.477s; the publication change brought it within budget.
+- RED watcher/background-cache tests now pass. The TUI reads scan-cache projections in
+  a worker through an independent read-only SQLite connection, with the event loop
+  retaining all writes. Cancellation stops stat walking between entries, discards the
+  entire cancelled observation (including missing-root races), joins readers and cannot
+  start native discovery after Quit. No underlying safety probe was skipped.
+
+Strict full-suite validation initially exposed pre-existing test SQLite resource leaks:
+connection transaction contexts did not close connections, and two CLI test doubles
+kept catalog.close mocked past the owning context. A tracemalloc allocation trace pointed
+to the old test_cursor_alias_locations copy helper. Fixed 37 such contexts with explicit
+closing while retaining their transaction contexts, and scoped the two close mocks.
+Assertions, native profiles, opt-ins and safety checks were not weakened or removed.
+
+Final checks on the completed implementation:
+- `.venv/bin/python -m pytest -q -W error --tb=short`: **662 passed, 10 skipped**,
+  **125.11s**, no warnings. Five skipped performance cases are verified explicitly below;
+  the other five are existing independent native opt-in gates.
+- `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .` (**161 Python files**),
+  `compileall` and `git diff --check`: **PASS**.
+- Final isolated SC-002: **5 passed**, **12.13s**. Cold discovery **9.306s** (<=10),
+  warm search/navigation **0.902s**, first meaningful TUI frame/normal exit **0.471s**,
+  combined filters **0.354s**, TUI header sort **0.326s** (each <=2).
+  The preceding isolated run also passed all five: 8.048 / 0.708 / 0.450 / 0.337 / 0.337s.
+  No project test/build/smoke ran concurrently with either timed run. Native OS caches
+  were not flushed and their exact state was uncontrolled; each manager catalog was new.
+- Same seed-1 synthetic corpus: **10,000 sessions**, 2,500 per provider, requested
+  **1,073,741,824 history bytes**, actual **1,130,785,488 native bytes**. No personal
+  histories or credentials were used. Final manager:
+  `/private/var/folders/w9/wf3qyzs1387bqc1qlwdkf3nm0000gn/T/sessions-final-cold-rlkjz_6p`.
+- Fresh locked, non-editable wheel outside the import checkout: **PASS**, Python
+  **3.12.12 / SQLite 3.54.1**. CLI help/version/refresh/paged list/literal search/show/
+  stats/resume dry-run/hide/unhide plus installed TUI pages, auto additions, details
+  deferral, toggle and F5 pass on **240→243 synthetic sessions** (420 original messages /
+  1,200 known tokens). Original native hashes remain unchanged. Wheel/sdist archive
+  checks exclude test/corpus/catalog artifacts. Wheel SHA-256:
+  **0c13e8f5ee332f25294449e475cb0ab0efe7f77a59b674e30d39bda581e38259**.
+
+Reproduction artifacts (Git-ignored): `.corpus/t178-opt-20261117-yt5ey15d/` contains
+profiles, RED/iteration diagnostics, full-final-3.log/xml, performance-final.log/xml,
+installed-receipt.json, final-summary.json and the installed-package smoke scripts.
+The generated performance fixture remains at `.corpus/t178-20261117-um7euxyt/corpus`.
+
+Sole-maintainer self-review: checked FR-029/030/SC-002 and T178.1–T178.4 traceability;
+SQL parameter binding, full-candidate completeness, literal Unicode/date/scope/order
+parity, snapshots and global handles; same-field serialization/privacy, unique-insert
+and alias/lifecycle/early-publication invariants; read-only cache ownership, cancellable
+no-follow observations, actual joins and original action identities; packaging and
+all measured limits. No new daemon, source format/schema, deletion policy, native DML,
+credentials or model calls. Source/ABI budgets and independent native gates remain
+unchanged. PR #13 can proceed to review; this completion does not close T118 or other
+independent native acceptance tasks.
+
+## Phase 17 verification — 2026-11-18
+
+T179–T180 complete. Before the fixes, five regressions in
+`tests/acceptance/test_live_overview.py` failed as expected. Four covered the
+lifecycle guard rejecting stale publication from a scan, with one root or aliases
+and with immediate or deferred publication. A second manager connection changed
+the lifecycle revision without changing native files. The fifth showed complete
+enumeration with a partial search index outside the first page after reopening.
+
+The worker now records the actual publication outcome. Deferred results show
+“waiting for dialog” and receive a completion or retry outcome when published.
+A rejected final publication preserves cached events and schedules the provider
+for retry after 30 seconds, even when the next stat observation matches. The tests
+verify successful retry, selection, and restored alias agreement. The overview
+shows persisted phase coverage for the metadata-filtered candidate set, including
+unloaded and nonmatching records. Tests cover auto refresh off, zero matches,
+filter changes, and clearing the warning after recovery. A recorded unavailable
+usage metric with reason “not recorded” is visible and needs no error retry.
+
+- Full `.venv/bin/pytest -q -W error --tb=short`: **668 passed, 10 skipped** in
+  124.11s. The five performance items were run separately. The other skips are
+  native opt-ins. Ruff check and format for 161 Python files and git diff check passed.
+- Isolated `.venv/bin/pytest tests/performance --corpus <fixture> -q -s --tb=short`:
+  **5 passed** in 10.05s. Cold discovery **7.419s**, cached search/navigation
+  **0.747s**, first TUI frame **0.411s**, combined filters/sort **0.332s**,
+  TUI header sort **0.371s**. Same seed-1 10,000-session corpus with 1 GiB of
+  requested history and 1,130,785,488 actual native bytes. New manager catalog,
+  uncontrolled OS cache and no concurrent project test/build load. Limits are
+  10s cold and 2s for the cached operations.
+- Built wheel and sdist using uv. Installed from the wheel in a fresh locked
+  Python 3.12.12 / SQLite 3.54.1 environment. CLI smoke and TUI pagination,
+  creation of three synthetic sessions (240→243), dialog deferral, toggle, F5 and
+  a cached incomplete search with no matches passed. Original fixture file hashes
+  match. Wheel SHA-256 `c482c72c0893769e249396fd3213b7aebba0fb6d672e4e2cbd8d01177c0427bc`.
+  Logs, JUnit results, smoke scripts and receipt are in
+  `.corpus/t179-t180-20261118/`.
+
+T181 remains open. The seven existing native harness tests passed, including the
+sandbox fixture's restrictions on network and files outside its disposable store.
+Claude, Grok and Cursor executable paths are available. The explicit native resume
+opt-in is pending. The last recorded results remain unverified as described under
+T171 above. Warp still requires permitted access. T118 continues to require a safe
+native API that can bind the exact confirmed descendant set.
+
+Self-review: verified FR-026/029/030 and T179–T181 traceability, single-writer
+publication, rejection without lifecycle bypass, deadline and modal handling,
+UID retention, bounded phase aggregation, CLI compatibility, packaging, and the
+original SC-002 limits. The catalog stays at schema 4.

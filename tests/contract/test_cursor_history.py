@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 from sessions_manager.models import SourceRoot
 from sessions_manager.sources.cursor import Adapter
@@ -40,7 +41,7 @@ def test_reachable_order_and_orphans_excluded(tmp_path):
 
 def test_missing_reference_is_partial(tmp_path):
     path = make(tmp_path)
-    with sqlite3.connect(path / "store.db") as db:
+    with closing(sqlite3.connect(path / "store.db")) as db, db:
         db.execute("DELETE FROM blobs WHERE id='user'")
     adapter = Adapter(SourceRoot.create("cursor", tmp_path))
     assert adapter.read_history(adapter.discover().sessions[0]).state == "partial"
@@ -50,7 +51,7 @@ def test_unknown_turn_does_not_hide_later_messages(tmp_path):
     from tests.support.cursor_factory import wire
 
     path = make(tmp_path)
-    with sqlite3.connect(path / "store.db") as db:
+    with closing(sqlite3.connect(path / "store.db")) as db, db:
         db.execute(
             "UPDATE blobs SET data=? WHERE id='root'", (wire(8, "unknown") + wire(8, "turn"),)
         )
@@ -65,7 +66,7 @@ def test_shell_turn_is_read_without_executing_command(tmp_path):
     from tests.support.cursor_factory import wire
 
     path = make(tmp_path)
-    with sqlite3.connect(path / "store.db") as db:
+    with closing(sqlite3.connect(path / "store.db")) as db, db:
         db.execute(
             "UPDATE blobs SET data=? WHERE id='root'", (wire(8, "shell-turn") + wire(8, "turn"),)
         )
@@ -89,7 +90,7 @@ def test_legacy_text_reference_of_hash_length_remains_readable(tmp_path):
 
     path = make(tmp_path)
     key = "a" * 32
-    with sqlite3.connect(path / "store.db") as db:
+    with closing(sqlite3.connect(path / "store.db")) as db, db:
         db.execute("UPDATE blobs SET data=? WHERE id='root'", (wire(8, key),))
         db.execute("UPDATE blobs SET id=? WHERE id='turn'", (key,))
     reader = Adapter(SourceRoot.create("cursor", tmp_path))

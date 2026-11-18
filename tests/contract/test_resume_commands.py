@@ -1,3 +1,4 @@
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -141,7 +142,7 @@ def test_verified_codex_profile_keeps_identity_with_relocated_cwd(tmp_path, fake
     path = codex_factory.make(native, rollout=False)
     import sqlite3
 
-    with sqlite3.connect(native / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(native / "state_5.sqlite")) as db, db:
         db.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT")
         db.execute("UPDATE threads SET history_mode='paginated'")
     root = SourceRoot.create(

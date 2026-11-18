@@ -523,3 +523,93 @@ The existing inventory, lock, journal, no-replace and lifecycle mechanisms are r
 T171 remains an independent failed/unverified native acceptance gate; recorded Warp denial
 is unchanged and no alternate route is attempted. Full/Ruff/package, supported Codex archive
 and unchanged SC-002 gates plus documented self-review precede GitHub delivery.
+
+
+## Автообновление и pagination — 2026-11-11
+
+Constitution check до реализации: FR-029/030 задают scope, интервалы, lifecycle и
+приёмку; тесты сначала RED; private cache/native ownership и существующие mutation
+checks сохранены; документация/полный pytest/Ruff/installed wheel/SC-002/PR обязательны.
+
+Добавить SQL projection из существующего JSON payload и chunks/FTS без миграции.
+Общий compiler QuerySpec сохраняет Python casefold/date/unknown/tie semantics, read
+transaction связывает rows/count/revision. Отдельные запросы position и selected IDs
+не декодируют остальные Session. Глобальные handles используют существующую projection.
+TUI хранит загруженный диапазон страниц; page requests объединяются, revision mismatch
+перечитывает диапазон. При перемещении выбранного UID за границы загружается его страница,
+соседние страницы доступны в обе стороны; это сохраняет SC-002 без загрузки промежуточных
+тысяч строк. Filter change сбрасывает limit/offset и пересекает batch через SQL.
+
+Один TUI worker управляет stat observation и discovery, публикация выполняется только
+в event loop. stat worker использует fd-relative no-follow traversal, не читает bodies.
+Независимые source retries выдерживают 30s; следующий poll через 5s от завершения.
+Pending manual refresh объединяется. Automatic results ждут закрытия диалогов; details
+не перерисовываются. Перед action readers дожидаются, собранные результаты
+публикуются и проверяются исходные UID/observations. Shutdown делает то же без публикации.
+
+Новые зависимости, daemon, native DML, schema и расширения cleanup исключены. Один
+координатор проще отдельных watcher/scan pools с competing publications. Проверить
+synthetic boundary/Pilot и full suite, затем отдельно SC-002 и installed-wheel smoke.
+
+Post-implementation constitution check: FR-029/030 have RED-to-GREEN acceptance and
+boundary evidence; ownership, retention and native formats/schema are unchanged.
+README and validation.md describe the new behavior and actual check results. The
+implementation is reviewable; T178 remains open because system-probe/full-suite and
+SC-002 gates did not pass on this host, including an over-budget original-code control.
+No thresholds or safety probes were relaxed. Submit as draft for review.
+
+
+## T178 performance follow-up — 2026-11-17
+
+Constitution check: existing SC-002/FR-029/030 budgets and native/cache ownership apply;
+no threshold relaxation, daemon, native DML, catalog version/table/column change or new
+dependency. The scoped work is T178 only; independent native gates remain separate.
+
+Profiling the cached 10,000-session query found random-access traversal through
+chunks_session for a metadata substring scan; a sequential scan returned the identical
+result in 0.032s versus 0.821s in the controlled comparison. CLI list still decodes every
+candidate Session despite the page API. Use SQL pages and aggregate completeness over
+the original metadata-filtered candidate set (before literal query/pagination), preserving
+partial-search exit codes, global handles, Unicode and stable unknown-last order.
+
+The cold diagnostic (with profiler overhead) took 17.4s, including 11.6s in eight root
+publications and 4.9s in generic public serialization. Retain early metadata publication
+and alias/lifecycle guarantees. Optimize repeated scalar/reflection work with tests
+preserving the serialized shape and isolation of nested mutable data; do not remove
+metadata phases or alter source verification to meet the budget.
+
+Move the TUI's full scan-cache read to a background read-only catalog connection before
+preparing main-thread writer state. Join it before actions/exit. Make stat walking
+cooperatively cancellable so Quit can stop between entries instead of finishing an
+unneeded complete tree walk; cancellation is not a source failure and cannot publish
+partial watcher observations. Existing readers still finish and catalog writes stay on
+the event loop. Add deterministic regression tests first, then run relevant boundaries,
+full pytest/Ruff, isolated SC-002 and installed-wheel smoke before updating PR #13.
+
+
+T178 final constitution check (2026-11-17): SQL pages/coverage and worker cancellation
+have observed RED-to-GREEN regressions; exact scalar/declared-shape serialization and
+unique first publication retain native, alias and lifecycle boundaries. Fixed test
+connection lifetimes rather than filtering ResourceWarning. Full 662-test strict gate,
+Ruff/format, isolated unchanged SC-002 and installed Python 3.12 wheel all pass.
+T178.1–T178.4/T178 are complete. No new schema, dependency or native capability;
+independent native acceptance/deletion tasks keep their prior status.
+
+## Phase 17 publication and coverage follow-up
+
+T179 uses the existing publication receipt at both the immediate and deferred writer
+paths. The refresh coordinator combines final root outcomes per provider. It records
+the retry deadline after publication, including a rejection by the lifecycle guard.
+The deferred batch retains outcomes from roots published earlier in the same scan.
+
+T180 extends the existing SQL coverage calculation to return one incomplete state and
+reason per phase for TUI. The overview computes coverage when it reloads its selection.
+It uses the metadata filters before either literal matching or pagination. This reuses
+the persisted phase state and avoids a second enumeration or decoding unloaded rows.
+CLI completeness and the persisted schema retain their existing contracts.
+
+Constitution check: synthetic regression tests reproduce the two reported failures
+before the fixes. The existing coordinator remains the sole publisher, and lifecycle
+checks continue to reject stale readers. The TUI status uses existing diagnostic codes.
+Documentation, full pytest, Ruff, the original SC-002 budgets and an installed wheel
+are the delivery checks. T181 uses the separate opt-in native gate.

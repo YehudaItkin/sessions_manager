@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import termios
 import time
+from contextlib import closing
 from pathlib import Path
 
 MARKER = "SYNTHETIC-RESUME-CONTEXT"
@@ -157,7 +158,12 @@ def verify(executable):
         result = server.call("thread/resume", {"threadId": tid})
         assert result["thread"]["id"] == tid and MARKER in json.dumps(result)
         server.call("thread/archive", {"threadId": tid})
-        with sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True) as db:
+        with (
+            closing(
+                sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True)
+            ) as db,
+            db,
+        ):
             assert db.execute("SELECT archived FROM threads WHERE id=?", (tid,)).fetchone()[0] == 1
             assert (
                 db.execute("SELECT archived FROM threads WHERE id=?", (neighbor,)).fetchone()[0]
@@ -173,7 +179,10 @@ def verify(executable):
     moved = base / "moved-project"
     project.rename(moved)
     assert native_ui(executable, tid, moved, env), "Native UI did not load the recorded context"
-    with sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True) as db:
+    with (
+        closing(sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True)) as db,
+        db,
+    ):
         row = db.execute(
             "SELECT cwd,history_mode,archived FROM threads WHERE id=?", (tid,)
         ).fetchone()

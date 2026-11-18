@@ -237,7 +237,7 @@ def scan_for_transport(root):
     return result
 
 
-def prepare_scan(config, catalog, providers=None):
+def prepare_scan(config, catalog, providers=None, *, invalidate=True, cached=None):
     from .models import PROVIDERS
 
     if providers and any(p not in PROVIDERS for p in providers):
@@ -261,8 +261,13 @@ def prepare_scan(config, catalog, providers=None):
         root._identity_root_ids = [
             r.root_id for r in config.roots if r.enabled and r.namespace_id == root.namespace_id
         ]
-    catalog.invalidate_aliases(roots, cycle)
-    old = {s.session_uid: s for s in catalog.sessions(include_missing=True)}
+    if invalidate:
+        catalog.invalidate_aliases(roots, cycle)
+    old = (
+        cached
+        if cached is not None
+        else {s.session_uid: s for s in catalog.sessions(include_missing=True)}
+    )
     return roots, [(r, {uid: s for uid, s in old.items() if s.root_id == r.root_id}) for r in roots]
 
 

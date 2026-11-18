@@ -112,17 +112,18 @@ def test_cli_nested_entry_failure_is_content_free(tmp_path, monkeypatch):
         trash = result["items"][0]["trash_id"]
         corrupt_entry(service, trash, "inventory")
         # Keep the test's real journal open across each CLI boundary.
-        monkeypatch.setattr(cli, "cleanup_service", lambda obj: service)
-        monkeypatch.setattr(service.catalog, "close", lambda: None)
-        for arguments in (
-            ["trash", "list"],
-            ["trash", "restore", trash],
-            ["trash", "purge", trash],
-        ):
-            response = CliRunner().invoke(app, ["--format", "json", *arguments])
-            assert response.exit_code == 6, response.output
-            assert json.loads(response.stdout)["error"]["code"] == "catalog_record_invalid"
-            assert "PRIVATE-SENTINEL" not in response.output
+        with monkeypatch.context() as invocation:
+            invocation.setattr(cli, "cleanup_service", lambda obj: service)
+            invocation.setattr(service.catalog, "close", lambda: None)
+            for arguments in (
+                ["trash", "list"],
+                ["trash", "restore", trash],
+                ["trash", "purge", trash],
+            ):
+                response = CliRunner().invoke(app, ["--format", "json", *arguments])
+                assert response.exit_code == 6, response.output
+                assert json.loads(response.stdout)["error"]["code"] == "catalog_record_invalid"
+                assert "PRIVATE-SENTINEL" not in response.output
 
 
 def test_missing_progress_field_fails_before_lifecycle_change(tmp_path):

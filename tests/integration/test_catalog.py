@@ -1,3 +1,4 @@
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -97,7 +98,7 @@ def test_phase10_migrates_v1_records_and_marks_new_schema(tmp_path):
     with Catalog(data) as catalog:
         catalog.publish(root, [session], complete=True)
         catalog.hide([session.session_uid], True)
-    with sqlite3.connect(data / "catalog.sqlite3") as old:
+    with closing(sqlite3.connect(data / "catalog.sqlite3")) as old, old:
         old.execute("ALTER TABLE sessions DROP COLUMN current_trash_id")
         old.execute("ALTER TABLE locations DROP COLUMN payload")
         old.execute("PRAGMA user_version=1")
@@ -130,7 +131,7 @@ def test_archive_capability_migration_retains_v2_session_and_marks_schema(tmp_pa
     with Catalog(data) as catalog:
         catalog.publish(root, [session], complete=True)
         catalog.hide([session.session_uid], True)
-    with sqlite3.connect(data / "catalog.sqlite3") as legacy:
+    with closing(sqlite3.connect(data / "catalog.sqlite3")) as legacy, legacy:
         legacy.execute(
             "UPDATE sessions SET payload=json_remove(payload,'$.capabilities.archive','$.capabilities.unarchive')"
         )
@@ -151,7 +152,7 @@ def test_lifecycle_v3_migration_preserves_identity_and_hidden_state(tmp_path):
     with Catalog(data) as catalog:
         catalog.publish(root, [session], complete=True)
         catalog.hide([session.session_uid], True)
-    with sqlite3.connect(data / "catalog.sqlite3") as legacy:
+    with closing(sqlite3.connect(data / "catalog.sqlite3")) as legacy, legacy:
         legacy.execute("ALTER TABLE sessions DROP COLUMN lifecycle_revision")
         legacy.execute("ALTER TABLE sessions DROP COLUMN lifecycle_pending")
         legacy.execute("PRAGMA user_version=3")
