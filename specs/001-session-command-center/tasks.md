@@ -1345,3 +1345,36 @@ cold **9.306s**, search/navigation **0.902s**, first TUI frame **0.471s**, combi
 filters **0.354s**, TUI sort **0.326s**. Original limits and native/deletion gates are
 unchanged. Native fixture hashes are preserved. See the T178 completion section in
 validation.md for RED-to-GREEN, resource-closure fixes, provenance and self-review.
+
+
+## Phase 17: Convergence
+
+Assessment: 2026-11-18. Current implementation assessed against spec.md, plan.md and all
+182 existing task entries (178 primary IDs plus T178.1–T178.4), without branch/history
+comparison. Checked 30 FR, 27 story acceptance scenarios, 7 buildable technical SC,
+24 plan decision blocks and the five constitutional principles plus project/workflow
+constraints. SC-003 owner usability timing remains a separate manual outcome metric.
+Current verification: full pytest with warnings as errors **662 PASS / 10 SKIP**
+(116.86s), Ruff check/format **PASS** (161 files); isolated synthetic probes below expose
+uncovered behavior despite the passing suite. SC-002 was not rerun by this assessment;
+its existing completed T178 evidence and unchanged budgets are retained. Ordinary stats
+exclude native archives by the explicit plan: Codex archive decision; this is intentional,
+not a new statistics-inclusion task. Conditional Codex cleanup T118 remains unchanged.
+Only this section is appended; existing tasks and completion records remain intact.
+
+- [X] T179 **HIGH** [F1] Согласовать результат автообновления и retry с фактической публикацией каталога per FR-026/029, T151/T174/T175/T177 и plan: lifecycle/publication and refresh coordinator decisions (contradicts).
+  Файлы: `src/sessions_manager/ui/app.py`, `src/sessions_manager/watch.py`, `src/sessions_manager/discovery.py`, `tests/acceptance/test_live_overview.py` и lifecycle/alias integration tests.
+  `refresh_catalog` вычисляет outcomes из reader result до `publish_scan`; guarded publication может сохранить root partial с `lifecycle_refresh_stale`, тогда как last_refresh становится complete и provider удаляется из retry. Подтверждённая synthetic probe: lifecycle begin/finish без native change непосредственно перед full publication отклоняет устаревший reader; каталог остаётся `lifecycle_refresh_stale`, last_refresh=`complete`, retry_at={}; при следующих неизменившихся stat через 35s root остаётся stale, last_refresh=`unchanged`. Сначала воспроизвести RED на управляемых часах, включая другой manager writer, один/несколько roots одного provider, alias guards и отложенную публикацию после диалога. Учитывать фактические publication receipts и сохранённую неполноту; pending/deferred результат не считать подтверждённым complete. Назначать требуемый повтор через 30s даже без новых native stat изменений и снимать его только после успешного согласованного прохода. Сохранить кеш, single-scan/coalescing, source scope, 5s от завершения, dialog/details/action pause и joins при Quit; не обходить lifecycle/alias guards и не выдавать obsolete reader за свежий. Проверить восстановление после retry, явный статус и отсутствие ложного complete/лишних параллельных scan; записать RED-to-GREEN и relevant/full/Ruff evidence.
+
+- [X] T180 **HIGH** [F2] Показывать сохранённую неполноту history/search/usage в TUI независимо от in-memory retry state per FR-009/026/030, US1/AC2, US2/AC1–AC2, SC-008, T031/T048/T104/T177/T178.1 и plan: explicit completeness/SQL page decisions (partial).
+  Файлы: `src/sessions_manager/ui/app.py`, `src/sessions_manager/catalog.py`, `tests/acceptance/test_live_overview.py`, `tests/integration/test_catalog_pages.py` и cached overview/search acceptance tests.
+  `update_status` проверяет только root enumeration states и refresh_schedule.retry_at, не сохранённые phase states. Подтверждённая synthetic probe через настоящий discovery: OSError в Claude history reader сохраняет root enumeration complete, history/search partial; после закрытия/повторного открытия Catalog и TUI до первого poll literal search выдаёт `Loaded 0 of 0 | Last refresh: cached | claude:complete` без признака неполноты. Сначала воспроизвести RED для warm startup, auto off, нулевых совпадений и неполной записи вне загруженной страницы/без совпадения с запросом. Показывать достоверную phase completeness и доступную причину для metadata-filtered candidate scope до буквального поиска/pagination, переиспользуя bounded SQL aggregation без полной десериализации Session. Различать успешную enumeration, неполную/недоступную историю/поиск/usage и cached freshness; not_recorded не превращать в ноль или необоснованный бесконечный error retry. Проверить снятие предупреждения после recovery, source/прочие фильтры, dialogs/details snapshot и сохранение UID/scroll/batch. Обновить документацию при изменении статуса; сохранить schema 4/native formats и SC-002 <=2s/<=10s. После T179–T180 выполнить full pytest/Ruff, изолированный неизменённый SC-002, installed-wheel smoke и документированный self-review/evidence для PR.
+
+- [ ] T181 **HIGH** [F3] Завершить остающийся native resume acceptance gate отдельно от исправлений автообновления per US3/AC1–AC2, FR-010/011/012, SC-004, T051–T054/T112/T113/T130/T144/T154/T159/T167/T171 и plan: validation gate 3/exact native binding decision (partial).
+  Файлы: `tests/acceptance/test_native_resume_runtime.py`, `tests/support/native_resume_gate.py`, `tests/acceptance/test_warp_runtime.py`, launch/binding regression tests и validation documentation.
+  Это продолжение существующего незакрытого gate T171, не новое разрешение запускать native CLI или обходить ограничения. Текущие acceptance tests пропускают Claude/Grok/Cursor без explicit executable opt-in; harmless Warp gate также opt-in. Passing default suite и fake argv/cwd children не доказывают загрузку прежнего native разговора. При допустимых условиях подтвердить исходные native ID, synthetic marker/context, cwd, отсутствие нового разговора и сохранность соседней disposable истории для поддержанных profiles; исправления начинать с expected failing regression. Сохранить точный failed/unverified результат, если sandbox/offline/profile условия не позволяют проверку, и оставить соответствующий gate открытым. Recorded Warp access denial остаётся обязательной границей: не запускать Warp и не обходить запрет shell/UI/другим transport; продолжать harmless single-claim/exact argv/cwd/exit gate только после появления разрешённого доступа. Не обращаться к личным stores, credentials, AI turns или удалённым сервисам и не применять unrestricted fallback. Не считать reader-compatible fixture доказанным native loader format, не расширять Codex archive profile и не обходить T118. T179–T180 можно завершить независимо от этого внешнего gate.
+
+Implementation checkpoint (2026-11-18): T179–T180 complete. Full strict pytest
+**668 passed, 10 skipped**, Ruff and installed wheel **PASS**. SC-002 **5 passed**:
+cold **7.419s**, warm **0.332–0.747s**. T181 awaits explicit native resume opt-in and
+the separately required Warp access. See validation.md for observations and commands.

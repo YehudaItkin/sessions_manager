@@ -594,3 +594,22 @@ connection lifetimes rather than filtering ResourceWarning. Full 662-test strict
 Ruff/format, isolated unchanged SC-002 and installed Python 3.12 wheel all pass.
 T178.1–T178.4/T178 are complete. No new schema, dependency or native capability;
 independent native acceptance/deletion tasks keep their prior status.
+
+## Phase 17 publication and coverage follow-up
+
+T179 uses the existing publication receipt at both the immediate and deferred writer
+paths. The refresh coordinator combines final root outcomes per provider. It records
+the retry deadline after publication, including a rejection by the lifecycle guard.
+The deferred batch retains outcomes from roots published earlier in the same scan.
+
+T180 extends the existing SQL coverage calculation to return one incomplete state and
+reason per phase for TUI. The overview computes coverage when it reloads its selection.
+It uses the metadata filters before either literal matching or pagination. This reuses
+the persisted phase state and avoids a second enumeration or decoding unloaded rows.
+CLI completeness and the persisted schema retain their existing contracts.
+
+Constitution check: synthetic regression tests reproduce the two reported failures
+before the fixes. The existing coordinator remains the sole publisher, and lifecycle
+checks continue to reject stale readers. The TUI status uses existing diagnostic codes.
+Documentation, full pytest, Ruff, the original SC-002 budgets and an installed wheel
+are the delivery checks. T181 uses the separate opt-in native gate.

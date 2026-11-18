@@ -205,6 +205,151 @@ async def test_history_reader_error_preserves_events_and_retries_without_new_sta
         assert catalog.events(uid)[0]["text"] == "updated history"
 
 
+@pytest.mark.parametrize("aliases", [False, True])
+@pytest.mark.parametrize("deferred", [False, True])
+async def test_publication_rejection_retries_unchanged_source(
+    tmp_path, monkeypatch, aliases, deferred
+):
+    from sessions_manager import discovery
+
+    roots = [
+        SourceRoot.create("claude", tmp_path / name)
+        for name in (("native", "alias") if aliases else ("native",))
+    ]
+    paths = [make(root.path, cwd=tmp_path / "project") for root in roots]
+    cfg = Config(tmp_path / "data", tmp_path / "config", roots, "replace")
+    cfg.prepare()
+    with Catalog(cfg.data_dir) as catalog, Catalog(cfg.data_dir) as other:
+        refresh(cfg, catalog)
+        uid = catalog.sessions()[0].session_uid
+        app = SessionsApp(cfg, catalog)
+        now = [0.0]
+        app.refresh_schedule.clock = lambda: now[0]
+        app.refresh_schedule.next_poll = 5
+        async with app.run_test() as pilot:
+            await cycle(app, now, 5)
+            old_events = catalog.events(uid)
+            for path in paths:
+                path.write_text(path.read_text().replace("Synthetic Claude question", "new body"))
+            original = discovery.publish_scan
+            bumped = False
+
+            def publish(writer, root, result):
+                nonlocal bumped
+                if result.stage != "metadata" and not bumped:
+                    other.begin_lifecycle(uid, "synthetic-no-change")
+                    other.finish_lifecycle(uid, "synthetic-no-change")
+                    bumped = True
+                return original(writer, root, result)
+
+            with monkeypatch.context() as boundary:
+                boundary.setattr(discovery, "publish_scan", publish)
+                if deferred:
+                    await pilot.press("enter")
+                await cycle(app, now, 10)
+                if deferred:
+                    assert not bumped and catalog.events(uid) == old_events
+                    assert app.last_refresh == "waiting for dialog"
+                    assert "claude" not in app.refresh_schedule.retry_at
+                    now[0] = 15
+                    await pilot.press("escape")
+                    app.auto_tick()
+                assert bumped
+                assert any(r["state"] == "lifecycle_refresh_stale" for r in catalog.root_states())
+                assert catalog.events(uid) == old_events
+                assert "incomplete" in app.last_refresh
+                deadline = now[0] + 30
+                assert app.refresh_schedule.retry_at == {"claude": deadline}
+            await cycle(app, now, deadline - 1)
+            assert any(r["state"] == "lifecycle_refresh_stale" for r in catalog.root_states())
+            await cycle(app, now, deadline)
+            assert all(r["state"] == "complete" for r in catalog.root_states())
+            assert app.last_refresh == "complete" and not app.refresh_schedule.retry_at
+            assert catalog.events(uid)[0]["text"] == "new body"
+            assert app.selected_uid() == uid
+            if aliases:
+                assert len(catalog.get(uid).extra["alias_bindings"]) == 2
+
+
+async def test_cached_search_discloses_incomplete_unloaded_candidates(many):
+    from dataclasses import replace
+
+    from sessions_manager.models import Capability
+
+    _, catalog, root, rows = many
+    ready = [
+        replace(row, history_state="complete", search_state="complete", usage_state="complete")
+        for row in rows
+    ]
+    affected = ready[-1]
+    partial = replace(
+        affected,
+        model="outside",
+        history_state="partial",
+        search_state="partial",
+        usage_state="unavailable",
+        capabilities={
+            **affected.capabilities,
+            "history": Capability("unavailable", "history_read_failed"),
+            "search": Capability("unavailable", "history_read_failed"),
+            "usage": Capability("unavailable", "not_recorded"),
+        },
+    )
+    ready = [replace(row, model="inside") for row in ready]
+    catalog.publish(root, [*ready[:-1], partial], complete=True)
+    with Catalog(catalog.data_dir) as reopened:
+        cfg = Config(catalog.data_dir, catalog.data_dir / "config.toml", [root], "replace")
+        app = SessionsApp(cfg, reopened)
+        app.refresh_schedule.clock = lambda: 0
+        app.refresh_schedule.next_poll = 5
+        app.filters = {"sort": "title"}
+        async with app.run_test() as pilot:
+            await pilot.click("#auto-refresh")
+            assert not app.auto_enabled
+            table = app.query_one("#sessions", DataTable)
+            status = app.query_one("#status", Static)
+            assert table.row_count == 100 and affected.session_uid not in table.rows
+            assert "history partial" in str(status.content)
+            assert "search partial" in str(status.content)
+            assert "usage unavailable" in str(status.content)
+            app.query = "no match"
+            app.reload_rows()
+            assert table.row_count == 0
+            assert "Incomplete" in str(status.content)
+            assert "history read failed" in str(status.content)
+            app.apply_filters({"model": "inside"})
+            assert "Incomplete" not in str(status.content)
+            app.apply_filters({"providers": ["cursor"]})
+            assert "Incomplete" not in str(status.content)
+            app.apply_filters({"sort": "title"})
+            catalog.publish(root, ready, complete=True)
+            app.reload_rows()
+            assert "Incomplete" not in str(status.content)
+
+
+async def test_missing_native_usage_is_visible_without_error_retry(live, monkeypatch):
+    from sessions_manager.models import UsageResult
+    from sessions_manager.sources.claude import Adapter
+
+    app, catalog, _, path, now = live
+    async with app.run_test():
+        await cycle(app, now, 5)
+        calls = []
+
+        def usage(self, session):
+            calls.append(session.session_uid)
+            return UsageResult(state="unavailable", reason="not_recorded")
+
+        monkeypatch.setattr(Adapter, "read_usage", usage)
+        path.write_text(path.read_text() + "\n")
+        await cycle(app, now, 10)
+        assert calls == [catalog.sessions()[0].session_uid]
+        assert "usage unavailable (not recorded)" in str(app.query_one("#status", Static).content)
+        assert not app.refresh_schedule.retry_at
+        await cycle(app, now, 40)
+        assert len(calls) == 1
+
+
 async def test_open_waits_for_reader_and_revalidates_original_uid(live, monkeypatch):
     from sessions_manager.sources.claude import Adapter
 

@@ -78,7 +78,6 @@ class SessionsApp(App):
     def __init__(self, config, catalog):
         super().__init__()
         self.config, self.catalog = config, catalog
-        self.source_status = []
         self.filters = {}
         self.scanning = False
         self.query = ""
@@ -92,12 +91,14 @@ class SessionsApp(App):
         self._total = 0
         self._revision = None
         self._view_filter = None
+        self._phase_issues = ""
         self._view_generation = 0
         self._loading = False
         self._rendering = False
         self._pending_refresh = set()
         self._deferred_results = []
         self._deferred_roots = []
+        self._deferred_outcomes = {}
         self._scan_done = asyncio.Event()
         self._scan_done.set()
         self._cancel_scan = threading.Event()
@@ -170,6 +171,13 @@ class SessionsApp(App):
             page = self.catalog.query_page(spec, self._limit, self._offset)
         self._total, self._revision = page.total, page.revision
         self.batch_selection = self.catalog.matching_selection(spec, self.batch_selection)
+        coverage = self.catalog.query_completeness(spec, include_reasons=True)
+        self._phase_issues = ", ".join(
+            f"{phase} {state}"
+            + (f" ({safe_text(reason.replace('_', ' '))[:48]})" if reason else "")
+            for phase, (state, reason) in coverage.items()
+            if state != "complete"
+        )
         self.query_one("#selection-summary", Static).update(safe_text(spec.describe()))
         self._rendering = True
         table.restoring = True
@@ -239,6 +247,7 @@ class SessionsApp(App):
             f"{f' | From row {self._offset + 1}' if self._offset else ''}"
             f"{' | Loading…' if self._loading else ''} | {self.scope}; {len(self.batch_selection)} selected; hidden {hidden}; trash {trash}"
             f"{' | Incomplete source data' if incomplete else ''}"
+            f"{f' | Incomplete data: {self._phase_issues}' if self._phase_issues else ''}"
             f" | Last refresh: {self.last_refresh} | cached {display_time(min(known) if known else None)} ({local_zone()}) | {health or 'No source roots; use sources add'}"
         )
 
@@ -324,7 +333,7 @@ class SessionsApp(App):
         )
         if self._stopping_refresh:
             return
-        if self.scanning or self._actions_paused:
+        if self.scanning or self._actions_paused or self._deferred_results:
             if not automatic:
                 self._pending_refresh.update(providers)
             return
@@ -335,14 +344,14 @@ class SessionsApp(App):
         )
 
     def auto_tick(self):
-        if self._stopping_refresh or not self.is_running:
+        if self._stopping_refresh or not self.is_running or self.scanning:
             return
         if len(self.screen_stack) == 1:
             if self._actions_paused and not self._action_waiting and self._scan_done.is_set():
                 self._actions_paused = False
                 self.refresh_schedule.next_poll = self.refresh_schedule.clock() + 5
             self.publish_deferred()
-        if self.scanning or self._actions_paused:
+        if self._deferred_results or self._actions_paused:
             return
         if self._pending_refresh:
             providers, self._pending_refresh = self._pending_refresh, set()
@@ -353,17 +362,36 @@ class SessionsApp(App):
     def publish_deferred(self, *, force=False):
         if not self._deferred_results or (not force and len(self.screen_stack) > 1):
             return
+        from ..discovery import READ_ERRORS
+
+        outcomes, self._deferred_outcomes = self._deferred_outcomes, {}
+        pending, self._deferred_results = self._deferred_results, []
+        roots, self._deferred_roots = self._deferred_roots, []
+        try:
+            if roots:
+                self.catalog.invalidate_aliases(roots, roots[0]._scan_cycle)
+            for root, result in pending:
+                self.publish_refresh_result(root, result, outcomes)
+        except READ_ERRORS:
+            outcomes.update((root.provider, False) for root, _ in pending)
+        self.finish_refresh(outcomes)
+        self.reload_rows()
+
+    def publish_refresh_result(self, root, result, outcomes):
         from ..discovery import publish_scan
 
-        pending, self._deferred_results = self._deferred_results, []
-        if self._deferred_roots:
-            self.catalog.invalidate_aliases(
-                self._deferred_roots, self._deferred_roots[0]._scan_cycle
+        receipt = publish_scan(self.catalog, root, result)
+        if result.stage != "metadata":
+            complete = receipt["state"] == "complete" and all(
+                "partial" not in (s.history_state, s.search_state, s.usage_state)
+                for s in result.sessions
             )
-            self._deferred_roots = []
-        for root, result in pending:
-            self.source_status.append(publish_scan(self.catalog, root, result))
-        self.reload_rows()
+            outcomes[root.provider] = outcomes.get(root.provider, True) and complete
+
+    def finish_refresh(self, outcomes):
+        if outcomes:
+            self.last_refresh = "complete" if all(outcomes.values()) else "incomplete; retry in 30s"
+        self.refresh_schedule.finished(outcomes)
 
     async def reader_call(self, function, *args):
         reader = asyncio.create_task(asyncio.to_thread(function, *args))
@@ -376,7 +404,7 @@ class SessionsApp(App):
             raise
 
     async def refresh_catalog(self, providers=None, *, automatic=False):
-        from ..discovery import READ_ERRORS, iter_scan, prepare_scan, publish_scan
+        from ..discovery import READ_ERRORS, iter_scan, prepare_scan
 
         if self._stopping_refresh:
             self.scanning = False
@@ -389,26 +417,28 @@ class SessionsApp(App):
                 or [r.provider for r in self.config.roots if r.enabled]
             )
             return
+        # Do not consume newer observations while a completed scan awaits publication.
+        if self._deferred_results and len(self.screen_stack) > 1:
+            if not automatic:
+                self._pending_refresh.update(
+                    providers
+                    or self.filters.get("providers")
+                    or [r.provider for r in self.config.roots if r.enabled]
+                )
+            self.scanning = False
+            self._scan_done.set()
+            return
         self._scan_task = asyncio.current_task()
         self.scanning = True
         self._scan_done.clear()
         self._cancel_scan = threading.Event()
         stream = None
         outcomes = {}
-        self.last_refresh = "checking" if automatic else "scanning"
-        self.update_status()
         try:
-            # Do not consume newer stamps while older results await a dialog.
-            if self._deferred_results and len(self.screen_stack) > 1:
-                if not automatic:
-                    self._pending_refresh.update(
-                        providers
-                        or self.filters.get("providers")
-                        or [r.provider for r in self.config.roots if r.enabled]
-                    )
-                return
             if self._deferred_results:
                 self.publish_deferred()
+            self.last_refresh = "checking" if automatic else "scanning"
+            self.update_status()
             if automatic:
                 roots = [
                     r
@@ -442,7 +472,7 @@ class SessionsApp(App):
                 cached=cached,
             )
             stream = iter_scan(arguments, self._cancel_scan)
-            self.source_status = []
+            aliases_invalidated = False
             while True:
                 scanned = await self.reader_call(next, stream, None)
                 if scanned is None:
@@ -451,25 +481,19 @@ class SessionsApp(App):
                 root = roots[index]
                 if self._stopping_refresh or result.reason == "cancelled":
                     continue
-                if result.stage != "metadata":
-                    complete = result.complete and all(
-                        "partial" not in (s.history_state, s.search_state, s.usage_state)
-                        for s in result.sessions
-                    )
-                    outcomes[root.provider] = outcomes.get(root.provider, True) and complete
                 if automatic and (len(self.screen_stack) > 1 or self._deferred_results):
-                    if not self.source_status:
+                    if not aliases_invalidated:
                         self._deferred_roots = roots
                     self._deferred_results.append((root, result))
                 else:
-                    if not self.source_status:
+                    if not aliases_invalidated:
                         self.catalog.invalidate_aliases(roots, roots[0]._scan_cycle)
-                    self.source_status.append(publish_scan(self.catalog, root, result))
+                        aliases_invalidated = True
+                    self.publish_refresh_result(root, result, outcomes)
                     self.reload_rows()
                 await asyncio.sleep(0)
-            self.last_refresh = "complete" if all(outcomes.values()) else "incomplete; retry in 30s"
-            if self._deferred_results:
-                self.last_refresh += "; waiting for dialog"
+            if not roots:
+                self.last_refresh = "complete"
         except asyncio.CancelledError:
             self._stopping_refresh = True
             raise
@@ -486,7 +510,11 @@ class SessionsApp(App):
                 if stream is not None:
                     await self.reader_call(stream.close)
             finally:
-                self.refresh_schedule.finished(outcomes)
+                if self._deferred_results:
+                    self._deferred_outcomes = outcomes
+                    self.last_refresh = "waiting for dialog"
+                else:
+                    self.finish_refresh(outcomes)
                 self.scanning = False
                 self._scan_task = None
                 self._scan_done.set()
@@ -537,6 +565,8 @@ class SessionsApp(App):
             await self._scan_done.wait()
         self._pending_refresh.clear()
         self._deferred_results.clear()
+        self._deferred_roots.clear()
+        self._deferred_outcomes.clear()
 
     async def action_quit(self):
         await self.stop_readers()

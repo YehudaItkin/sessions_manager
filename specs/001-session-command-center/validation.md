@@ -1013,3 +1013,52 @@ all measured limits. No new daemon, source format/schema, deletion policy, nativ
 credentials or model calls. Source/ABI budgets and independent native gates remain
 unchanged. PR #13 can proceed to review; this completion does not close T118 or other
 independent native acceptance tasks.
+
+## Phase 17 verification — 2026-11-18
+
+T179–T180 complete. Before the fixes, five regressions in
+`tests/acceptance/test_live_overview.py` failed as expected. Four covered the
+lifecycle guard rejecting stale publication from a scan, with one root or aliases
+and with immediate or deferred publication. A second manager connection changed
+the lifecycle revision without changing native files. The fifth showed complete
+enumeration with a partial search index outside the first page after reopening.
+
+The worker now records the actual publication outcome. Deferred results show
+“waiting for dialog” and receive a completion or retry outcome when published.
+A rejected final publication preserves cached events and schedules the provider
+for retry after 30 seconds, even when the next stat observation matches. The tests
+verify successful retry, selection, and restored alias agreement. The overview
+shows persisted phase coverage for the metadata-filtered candidate set, including
+unloaded and nonmatching records. Tests cover auto refresh off, zero matches,
+filter changes, and clearing the warning after recovery. A recorded unavailable
+usage metric with reason “not recorded” is visible and needs no error retry.
+
+- Full `.venv/bin/pytest -q -W error --tb=short`: **668 passed, 10 skipped** in
+  124.11s. The five performance items were run separately. The other skips are
+  native opt-ins. Ruff check and format for 161 Python files and git diff check passed.
+- Isolated `.venv/bin/pytest tests/performance --corpus <fixture> -q -s --tb=short`:
+  **5 passed** in 10.05s. Cold discovery **7.419s**, cached search/navigation
+  **0.747s**, first TUI frame **0.411s**, combined filters/sort **0.332s**,
+  TUI header sort **0.371s**. Same seed-1 10,000-session corpus with 1 GiB of
+  requested history and 1,130,785,488 actual native bytes. New manager catalog,
+  uncontrolled OS cache and no concurrent project test/build load. Limits are
+  10s cold and 2s for the cached operations.
+- Built wheel and sdist using uv. Installed from the wheel in a fresh locked
+  Python 3.12.12 / SQLite 3.54.1 environment. CLI smoke and TUI pagination,
+  creation of three synthetic sessions (240→243), dialog deferral, toggle, F5 and
+  a cached incomplete search with no matches passed. Original fixture file hashes
+  match. Wheel SHA-256 `c482c72c0893769e249396fd3213b7aebba0fb6d672e4e2cbd8d01177c0427bc`.
+  Logs, JUnit results, smoke scripts and receipt are in
+  `.corpus/t179-t180-20261118/`.
+
+T181 remains open. The seven existing native harness tests passed, including the
+sandbox fixture's restrictions on network and files outside its disposable store.
+Claude, Grok and Cursor executable paths are available. The explicit native resume
+opt-in is pending. The last recorded results remain unverified as described under
+T171 above. Warp still requires permitted access. T118 continues to require a safe
+native API that can bind the exact confirmed descendant set.
+
+Self-review: verified FR-026/029/030 and T179–T181 traceability, single-writer
+publication, rejection without lifecycle bypass, deadline and modal handling,
+UID retention, bounded phase aggregation, CLI compatibility, packaging, and the
+original SC-002 limits. The catalog stays at schema 4.

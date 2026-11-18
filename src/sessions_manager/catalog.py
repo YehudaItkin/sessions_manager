@@ -819,19 +819,36 @@ class Catalog:
         ).fetchone()
         return row[0] if row else None
 
-    def query_completeness(self, spec):
+    def query_completeness(self, spec, *, include_reasons=False):
         """Coverage of metadata-filtered candidates, including unloaded search misses."""
         from dataclasses import replace
 
         selection, _, args = self._selection_sql(replace(spec, query=None))
         phases = ("history", "search", "usage")
-        expressions = ",".join(
-            f"COALESCE(MAX(json_extract(payload,'$.{phase}_state') IS NOT 'complete'),0)"
-            for phase in phases
-        )
-        row = self.connection.execute(f"SELECT {expressions} FROM ({selection})", args).fetchone()
+        expressions = []
+        for phase in phases:
+            state = f"json_extract(payload,'$.{phase}_state')"
+            if include_reasons:
+                reason = f"json_extract(payload,'$.capabilities.{phase}.reason')"
+                # Pick one actual incomplete observation per phase so the state
+                # and reason refer to the same record. No row payloads are decoded.
+                expressions.append(
+                    f"MAX(CASE WHEN {state} IS NOT 'complete' "
+                    f"THEN COALESCE({state},'unavailable') || ':' || COALESCE({reason},'') END)"
+                )
+            else:
+                expressions.append(f"MAX({state} IS NOT 'complete')")
+        row = self.connection.execute(
+            f"SELECT {','.join(expressions)} FROM ({selection})", args
+        ).fetchone()
+        if include_reasons:
+            return {
+                phase: (observation or "complete").partition(":")[::2]
+                for phase, observation in zip(phases, row, strict=True)
+            }
         return {
-            phase: "partial" if row[index] else "complete" for index, phase in enumerate(phases)
+            phase: "partial" if value else "complete"
+            for phase, value in zip(phases, row, strict=True)
         }
 
     def matching_selection(self, spec, ids):
